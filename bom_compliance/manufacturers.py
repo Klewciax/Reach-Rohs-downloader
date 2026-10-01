@@ -79,6 +79,9 @@ class ManufacturerRegistry:
                     contact_pages=entry.get("contact_pages", []) or [],
                     search_urls=entry.get("search_urls", []) or [],
                     general_documents=entry.get("general_documents", []) or [],
+                    product_pages=entry.get("product_pages", []) or [],
+                    longevity_pages=entry.get("longevity_pages", []) or [],
+                    longevity_documents=entry.get("longevity_documents", []) or [],
                 )
             )
         return cls(items, fuzzy=fuzzy, cutoff=cutoff)

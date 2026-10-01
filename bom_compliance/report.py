@@ -11,7 +11,7 @@ from pathlib import Path
 from .config import Settings
 from .contacts import ContactInfo
 from .downloader import safe_name
-from .models import DocType, InvalidRow, ItemResult, Status
+from .models import DocType, InvalidRow, ItemResult, LifecycleStatus, Status
 from .pipeline import is_success
 
 log = logging.getLogger(__name__)
@@ -27,6 +27,26 @@ STATUS_PL = {
     Status.ERROR: "BŁĄD",
     Status.UNKNOWN_MANUFACTURER: "NIEZNANY PRODUCENT",
 }
+
+LIFECYCLE_PL = {
+    LifecycleStatus.ACTIVE: "ACTIVE (w produkcji)",
+    LifecycleStatus.PREVIEW: "PREVIEW (przed produkcją)",
+    LifecycleStatus.MATURE: "MATURE (dojrzały)",
+    LifecycleStatus.NRND: "NRND (niezalecany do nowych projektów)",
+    LifecycleStatus.LAST_TIME_BUY: "LAST TIME BUY (ostatnie zamówienia)",
+    LifecycleStatus.OBSOLETE: "EOL / OBSOLETE (wycofany)",
+    LifecycleStatus.UNKNOWN: "NIEZNANY – do ręcznej weryfikacji",
+}
+RISKY = {LifecycleStatus.NRND, LifecycleStatus.LAST_TIME_BUY, LifecycleStatus.OBSOLETE}
+
+LIFECYCLE_COLUMNS = [
+    "Status cyklu życia", "Etykieta producenta", "Zakres statusu", "URL statusu", "Dowód (fragment strony)",
+    "Kopia strony", "Sprawdzono (UTC)", "Uwagi (cykl życia)",
+]
+LONGEVITY_COLUMNS = [
+    "Longevity: znaleziono", "Program / dokument", "Okres (lata)", "Od (rok)", "Do kiedy (rok)", "Podstawa daty",
+    "Zakres longevity", "URL longevity", "Plik longevity", "Dowód longevity", "Uwagi (longevity)",
+]
 
 ITEM_COLUMNS = [
     "MPN", "Manufacturer (BoM)", "Manufacturer (znormalizowany)", "Dopasowanie producenta", "Ref. designators",
@@ -54,6 +74,20 @@ class Summary:
 
 
 def summarize(results: list[ItemResult], settings: Settings, meta: dict, invalid: list[InvalidRow]) -> Summary:
+    s = _summarize(results, settings, meta, invalid)
+    if settings.check_lifecycle:
+        for st in LifecycleStatus:
+            n = sum(1 for r in results if r.lifecycle and r.lifecycle.status == st)
+            s.extra[f"Cykl życia: {LIFECYCLE_PL[st]}"] = n
+    if settings.check_longevity:
+        s.extra["Longevity: ustalono datę 'do kiedy'"] = sum(
+            1 for r in results if r.longevity and r.longevity.found and r.longevity.end_year)
+        s.extra["Longevity: brak deklaracji dla MPN/rodziny"] = sum(
+            1 for r in results if not (r.longevity and r.longevity.found))
+    return s
+
+
+def _summarize(results: list[ItemResult], settings: Settings, meta: dict, invalid: list[InvalidRow]) -> Summary:
     rohs = sum(is_success(r.rohs_status, settings) for r in results)
     reach = sum(is_success(r.reach_status, settings) for r in results)
     both = sum(is_success(r.rohs_status, settings) and is_success(r.reach_status, settings) for r in results)
@@ -72,7 +106,34 @@ def _doc_cells(r: ItemResult, t: DocType) -> tuple[str, str, str, str]:
             "\n".join(d.scope.value for d in docs), "\n".join(dict.fromkeys(d.downloaded_at for d in docs)))
 
 
-def item_rows(results: list[ItemResult]) -> list[list[str]]:
+def lifecycle_cells(r: ItemResult) -> list[str]:
+    lc = r.lifecycle
+    if lc is None:
+        return [""] * len(LIFECYCLE_COLUMNS)
+    scope = {"part": "dla MPN", "page": "strona produktu / rodziny"}.get(lc.scope, "")
+    return [LIFECYCLE_PL[lc.status], lc.label, scope, lc.source_url, lc.evidence, lc.snapshot, lc.checked_at, lc.note]
+
+
+def longevity_cells(r: ItemResult) -> list[str]:
+    lg = r.longevity
+    if lg is None:
+        return [""] * len(LONGEVITY_COLUMNS)
+    scope = {"part": "dla MPN", "family": "rodzina (prefiks MPN)", "general": "ogólna polityka"}.get(lg.scope, lg.scope)
+    return ["TAK" if lg.found else "NIE", lg.program, "" if lg.years is None else str(lg.years),
+            "" if lg.start_year is None else str(lg.start_year), "" if lg.end_year is None else str(lg.end_year),
+            lg.end_basis, scope, lg.source_url, "\n".join(d.path for d in lg.docs), lg.evidence, lg.note]
+
+
+def item_columns(settings: Settings) -> list[str]:
+    cols = list(ITEM_COLUMNS)
+    if settings.check_lifecycle:
+        cols += LIFECYCLE_COLUMNS
+    if settings.check_longevity:
+        cols += LONGEVITY_COLUMNS
+    return cols
+
+
+def item_rows(results: list[ItemResult], settings: Settings | None = None) -> list[list[str]]:
     rows = []
     for r in results:
         rp, ru, rs, rd = _doc_cells(r, DocType.ROHS)
@@ -90,13 +151,17 @@ def item_rows(results: list[ItemResult]) -> list[list[str]]:
             STATUS_PL[r.rohs_status], STATUS_PL[r.reach_status], rp, ru, rs, ep, eu, es, dates, verified,
             "\n".join(reasons), "\n".join(r.manual_urls),
         ])
+        if settings is not None and settings.check_lifecycle:
+            rows[-1] += lifecycle_cells(r)
+        if settings is not None and settings.check_longevity:
+            rows[-1] += longevity_cells(r)
     return rows
 
 
 def file_rows(results: list[ItemResult]) -> list[list[str]]:
     seen: "OrderedDict[str, list]" = OrderedDict()
     for r in results:
-        for d in r.docs:
+        for d in r.docs + (r.longevity.docs if r.longevity else []):
             if d.path not in seen:
                 seen[d.path] = [d.path, d.url, d.final_url, d.downloaded_at, d.sha256,
                                 ", ".join(sorted(t.value for t in d.doc_types)), d.scope.value,
@@ -121,17 +186,25 @@ def missing_types(r: ItemResult, settings: Settings) -> list[tuple[str, bool]]:
             out.append((name, True))  # prosimy o deklarację dla konkretnego MPN
         elif not is_success(st, settings):
             out.append((name, False))
+    if settings.check_longevity and r.item.manufacturer is not None:
+        lg = r.longevity
+        if lg is None or not lg.found or lg.end_year is None:
+            out.append(("Longevity", False))
+        elif lg.scope != "part":
+            out.append(("Longevity", True))
     return out
 
 
 def _missing_pl(miss: list[tuple[str, bool]]) -> str:
-    return ", ".join(f"{t} (jest tylko dokument zbiorczy – potrzebna deklaracja dla MPN)" if fam else t
-                     for t, fam in miss)
+    names = {"Longevity": "Longevity (deklaracja długości produkcji)"}
+    return ", ".join(f"{names.get(t, t)} (jest tylko dokument zbiorczy – potrzebna deklaracja dla MPN)" if fam
+                     else names.get(t, t) for t, fam in miss)
 
 
 def _missing_en(miss: list[tuple[str, bool]]) -> str:
-    return ", ".join(f"{t} – part-specific (only a product-family document found)" if fam else t
-                     for t, fam in miss)
+    names = {"Longevity": "longevity / end-of-production date"}
+    return ", ".join(f"{names.get(t, t)} – part-specific (only a product-family document found)" if fam
+                     else names.get(t, t) for t, fam in miss)
 
 
 def build_request_groups(results: list[ItemResult], settings: Settings,
@@ -155,25 +228,43 @@ def build_request_groups(results: list[ItemResult], settings: Settings,
 
 def email_template(g: RequestGroup, s: Settings) -> str:
     lines = [f"  - {mpn}  (needed: {_missing_en(m)})" for mpn, m, _ in g.items]
-    return f"""Subject: Request for RoHS and REACH (SVHC) compliance declarations – {len(g.items)} {g.manufacturer} part number(s)
+    kinds = {t for _, m, _ in g.items for t, _ in m}
+    compliance = bool(kinds & {"RoHS", "REACH"})
+    longevity = "Longevity" in kinds
+    asks: list[str] = []
+    if compliance:
+        asks += [
+            "EU RoHS declaration / certificate of compliance (Directive 2011/65/EU as amended by\n"
+            "     (EU) 2015/863), stating any RoHS exemptions used (Annex III/IV item numbers).",
+            "EU REACH declaration (Regulation (EC) No 1907/2006), including the SVHC status\n"
+            "     against the latest ECHA Candidate List: name and CAS number of any SVHC present\n"
+            "     above 0.1% w/w, its concentration and location in the article, and the Candidate\n"
+            "     List version the statement refers to.",
+            "If available, a full material declaration (IPC-1752A Class D or equivalent).",
+        ]
+    if longevity:
+        asks += [
+            "Current product lifecycle status (e.g. active / NRND / last-time-buy / obsolete) and\n"
+            "     a longevity statement: the guaranteed minimum production / availability period and\n"
+            "     the date until which the part is planned to remain in production, including whether\n"
+            "     the part is covered by a formal longevity programme and your EOL notification policy.",
+        ]
+    numbered = "\n".join(f"  {i}. {a}" for i, a in enumerate(asks, 1))
+    topics = " and ".join(x for x, on in (("RoHS and REACH (SVHC) compliance declarations", compliance),
+                                           ("product longevity information", longevity)) if on)
+    return f"""Subject: Request for {topics} – {len(g.items)} {g.manufacturer} part number(s)
 
 Dear {g.manufacturer} Product Compliance / Environmental Team,
 
 We use the following {g.manufacturer} components in our product "{s.project_name}" and are
-compiling the environmental compliance documentation for it. We were unable to obtain
-part-specific declarations for these part numbers from your official website:
+compiling the compliance and supply documentation for it. We were unable to obtain
+part-specific information for these part numbers from your official website:
 
 {chr(10).join(lines)}
 
 For each part number listed above, could you please provide:
 
-  1. EU RoHS declaration / certificate of compliance (Directive 2011/65/EU as amended by
-     (EU) 2015/863), stating any RoHS exemptions used (Annex III/IV item numbers).
-  2. EU REACH declaration (Regulation (EC) No 1907/2006), including the SVHC status
-     against the latest ECHA Candidate List: name and CAS number of any SVHC present
-     above 0.1% w/w, its concentration and location in the article, and the Candidate
-     List version the statement refers to.
-  3. If available, a full material declaration (IPC-1752A Class D or equivalent).
+{numbered}
 
 The documents should be issued by {g.manufacturer} as the manufacturer and clearly reference
 the exact manufacturer part numbers (orderable part numbers) listed above. A signed PDF
@@ -192,8 +283,9 @@ def write_reports(out_dir: Path, results: list[ItemResult], invalid: list[Invali
                   settings: Settings, groups: list[RequestGroup], summary: Summary) -> dict[str, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     paths: dict[str, Path] = {}
-    items = item_rows(results)
+    items = item_rows(results, settings)
     files = file_rows(results)
+    item_header = item_columns(settings)
 
     def write_csv(name: str, header: list[str], rows: list[list]) -> Path:
         p = out_dir / name
@@ -203,7 +295,7 @@ def write_reports(out_dir: Path, results: list[ItemResult], invalid: list[Invali
             w.writerows(rows)
         return p
 
-    paths["items_csv"] = write_csv("report_items.csv", ITEM_COLUMNS, items)
+    paths["items_csv"] = write_csv("report_items.csv", item_header, items)
     file_header = ["Ścieżka", "URL źródłowy", "URL końcowy", "Data pobrania (UTC)", "SHA-256", "Rodzaj",
                    "Zakres", "Producent", "Użyty dla MPN", "Tytuł"]
     paths["files_csv"] = write_csv("report_files.csv", file_header, files)
@@ -223,12 +315,45 @@ def write_reports(out_dir: Path, results: list[ItemResult], invalid: list[Invali
         contact = g.contact.summary() if g.contact else "DO RĘCZNEJ WERYFIKACJI"
         p.write_text(f"# Kontakt:\n# " + contact.replace("\n", "\n# ") + "\n\n" + g.email, encoding="utf-8")
 
+    lc_rows = lifecycle_rows(results, settings)
+    if lc_rows:
+        paths["lifecycle_csv"] = write_csv("report_lifecycle.csv", lifecycle_header(settings), lc_rows)
     paths["xlsx"] = _write_xlsx(out_dir / "report.xlsx", summary, items, files, file_header, groups, req_rows,
-                                req_header, invalid, meta, settings)
+                                req_header, invalid, meta, settings, item_header, lc_rows)
     return paths
 
 
+def lifecycle_header(settings: Settings) -> list[str]:
+    cols = ["MPN", "Producent", "Ref. designators"]
+    if settings.check_lifecycle:
+        cols += LIFECYCLE_COLUMNS
+    if settings.check_longevity:
+        cols += LONGEVITY_COLUMNS
+    return cols
+
+
+def lifecycle_rows(results: list[ItemResult], settings: Settings) -> list[list[str]]:
+    if not (settings.check_lifecycle or settings.check_longevity):
+        return []
+    rows = []
+    for r in results:
+        row = [r.item.mpn, r.item.manufacturer_name, ", ".join(r.item.refdes)]
+        if settings.check_lifecycle:
+            row += lifecycle_cells(r)
+        if settings.check_longevity:
+            row += longevity_cells(r)
+        rows.append(row)
+    return rows
+
+
 def summary_lines(s: Summary) -> list[tuple[str, str, str]]:
+    extra = []
+    for label, n in s.extra.items():
+        extra.append((label, str(n), s.pct(n)))
+    return extra_first(s) + extra
+
+
+def extra_first(s: Summary) -> list[tuple[str, str, str]]:
     return [
         ("Wiersze BoM (niepuste)", str(s.bom_rows_total), ""),
         ("Wiersze poprawne", str(s.bom_rows_valid), ""),
@@ -243,7 +368,8 @@ def summary_lines(s: Summary) -> list[tuple[str, str, str]]:
 
 
 def _write_xlsx(path: Path, s: Summary, items, files, file_header, groups, req_rows, req_header,
-                invalid: list[InvalidRow], meta: dict, settings: Settings) -> Path:
+                invalid: list[InvalidRow], meta: dict, settings: Settings, item_header: list[str],
+                lc_rows: list[list[str]]) -> Path:
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
@@ -300,7 +426,20 @@ def _write_xlsx(path: Path, s: Summary, items, files, file_header, groups, req_r
     ws.column_dimensions["C"].width = 16
 
     widths = {1: 22, 2: 26, 3: 22, 9: 50, 10: 60, 12: 50, 13: 60, 17: 70, 18: 60}
-    sheet(wb.create_sheet("Pozycje"), ITEM_COLUMNS, items, widths, status_cols=(7, 8))
+    sheet(wb.create_sheet("Pozycje"), item_header, items, widths, status_cols=(7, 8))
+    if lc_rows:
+        lc_header = lifecycle_header(settings)
+        ws_lc = wb.create_sheet("Cykl życia i longevity")
+        sheet(ws_lc, lc_header, lc_rows, {1: 22, 2: 22, 4: 30, 7: 50, 8: 60, 9: 40, 11: 50})
+        if settings.check_lifecycle:
+            col = lc_header.index("Status cyklu życia") + 1
+            colors = {"ACTIVE": "C6EFCE", "MATURE": "FFF2CC", "PREVIEW": "FFF2CC", "NRND": "FFEB9C",
+                      "LAST TIME": "FFC7CE", "EOL": "FFC7CE", "NIEZNANY": "EDEDED"}
+            for row in ws_lc.iter_rows(min_row=2):
+                val = str(row[col - 1].value or "")
+                for k, c in colors.items():
+                    if val.startswith(k):
+                        row[col - 1].fill = PatternFill("solid", fgColor=c)
     sheet(wb.create_sheet("Pliki"), file_header, files, {1: 70, 2: 70, 3: 70, 5: 20})
     sheet(wb.create_sheet("Do uzyskania mailowo"), req_header, req_rows, {1: 24, 2: 24, 3: 16, 4: 50, 5: 90})
     sheet(wb.create_sheet("Szablony e-mail"), ["Producent", "Liczba MPN", "Treść e-maila"],
@@ -316,7 +455,8 @@ def print_console_summary(s: Summary, groups: list[RequestGroup], paths: dict[st
                           ) -> None:
     w = 52
     print("\n" + "=" * 72)
-    print("RAPORT RoHS / REACH")
+    print("RAPORT RoHS / REACH" + (" / CYKL ŻYCIA" if any(r.lifecycle for r in results) else "")
+          + (" / LONGEVITY" if any(r.longevity for r in results) else ""))
     print("=" * 72)
     for label, n, pct in summary_lines(s):
         print(f"{label:<{w}} {n:>6}  {pct:>7}")
@@ -326,6 +466,20 @@ def print_console_summary(s: Summary, groups: list[RequestGroup], paths: dict[st
             status_counts[st.value] = status_counts.get(st.value, 0) + 1
     print("-" * 72)
     print("Statusy (RoHS + REACH łącznie): " + ", ".join(f"{k}={v}" for k, v in sorted(status_counts.items())))
+    risky = [r for r in results if r.lifecycle and r.lifecycle.status in RISKY]
+    if risky:
+        print("-" * 72)
+        print("UWAGA – komponenty NRND / Last Time Buy / EOL (wg strony producenta):")
+        for r in risky:
+            print(f"  {r.item.manufacturer_name} {r.item.mpn}: {LIFECYCLE_PL[r.lifecycle.status]} "
+                  f"('{r.lifecycle.label}', {r.lifecycle.source_url})")
+    ending = [r for r in results if r.longevity and r.longevity.end_year]
+    if ending:
+        print("-" * 72)
+        print("Longevity (zadeklarowana dostępność do roku):")
+        for r in sorted(ending, key=lambda x: x.longevity.end_year):
+            print(f"  {r.item.manufacturer_name} {r.item.mpn}: do {r.longevity.end_year} "
+                  f"[{r.longevity.scope}; {r.longevity.end_basis}]")
     if groups:
         print("-" * 72)
         print("Do uzyskania mailowo:")

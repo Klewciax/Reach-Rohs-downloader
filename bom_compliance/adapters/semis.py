@@ -40,6 +40,12 @@ class AnalogDevicesAdapter(BaseAdapter):
     PAGE = "https://www.analog.com/en/about-adi/quality-reliability/material-declarations.html?part={mpn}"
     SEARCH_TOOL = "https://quality.analog.com/searchresults.aspx"
 
+    @staticmethod
+    def base_part(mpn: str) -> str:
+        """Model ADI ze zamówieniowego numeru: LTC3780EG#PBF -> LTC3780, ADA4177-1ARMZ -> ADA4177-1."""
+        m = re.match(r"^([A-Z]+\d+(?:-\d+)?)", mpn.strip().upper())
+        return m.group(1) if m else BaseAdapter.base_part(mpn)
+
     def find_part_documents(self, mpn: str, ctx: AdapterContext, result: SearchResult) -> None:
         url = self.PAGE.format(mpn=self.q(mpn))
         page = self.fetch_html(url, ctx, result)

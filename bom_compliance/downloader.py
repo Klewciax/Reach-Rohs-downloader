@@ -29,7 +29,7 @@ def safe_name(s: str, max_len: int = 80) -> str:
 
 
 def _types_label(types: set[DocType]) -> str:
-    order = [DocType.ROHS, DocType.REACH, DocType.MCD]
+    order = [DocType.ROHS, DocType.REACH, DocType.MCD, DocType.LONGEVITY]
     return "-".join(t.value for t in order if t in types) or "DOC"
 
 
@@ -101,9 +101,9 @@ class Downloader:
 
         text = fetched.text
         if len(text.strip()) >= 40:  # mniej = prawdopodobnie skan bez warstwy tekstowej
-            detected = types_from_text(text)
+            detected = set() if cand.fixed_types else types_from_text(text)
             types = detected or set(cand.doc_types)
-            if not detected:
+            if not detected and not cand.fixed_types:
                 notes.append("rodzaj dokumentu nie potwierdzony w treści – przyjęto z kontekstu linku")
             scope, why = scope_from_text(item.mpn, text)
             mpn_verified = "yes" if scope == Scope.PART else "no"
@@ -155,3 +155,8 @@ class Downloader:
         fetched.saved_path = path
         log.info("Zapisano %s (%s)", path, fetched.url)
         return path
+
+    def text_for(self, url: str) -> str:
+        """Tekst wyodrębniony z wcześniej pobranego dokumentu (pusty, jeśli brak)."""
+        cached = self._cache.get(url)
+        return cached.text if isinstance(cached, _Fetched) else ""

@@ -7,8 +7,10 @@ from pathlib import Path
 from .adapters import AdapterContext, get_adapter
 from .config import Settings
 from .downloader import Downloader, NotADocument
+from .lifecycle import LifecycleChecker
 from .http_client import DomainNotAllowed, FetchError, LoginRequired, PoliteSession, RobotsDisallowed, host_allowed
-from .models import BomItem, Candidate, DocType, ItemResult, Scope, SearchResult, Status
+from .models import (BomItem, Candidate, DocType, ItemResult, LifecycleInfo, LongevityInfo, Scope, SearchResult,
+                     Status)
 
 log = logging.getLogger(__name__)
 
@@ -30,6 +32,8 @@ class Pipeline:
         self.settings = settings
         self.session = session or PoliteSession(settings)
         self.downloader = Downloader(self.session, settings, out_dir)
+        self.lifecycle = LifecycleChecker(lambda m: AdapterContext(self.session, settings, m),
+                                          self.downloader, out_dir, settings)
 
     def process(self, items: list[BomItem], progress=None) -> list[ItemResult]:
         results = []
@@ -48,6 +52,10 @@ class Pipeline:
             res.reasons.append(
                 f"Producent '{item.manufacturer_raw}' nie występuje w rejestrze (config/manufacturers.yaml) – "
                 "brak zweryfikowanej domeny, nic nie pobrano. Do ręcznej weryfikacji / dodaj producenta do rejestru")
+            if self.settings.check_lifecycle:
+                res.lifecycle = LifecycleInfo(note="nieznany producent – do ręcznej weryfikacji")
+            if self.settings.check_longevity:
+                res.longevity = LongevityInfo(note="nieznany producent – do ręcznej weryfikacji")
             return res
         if item.match_method == "fuzzy":
             res.notes.append(f"Producent dopasowany w przybliżeniu: '{item.manufacturer_raw}' -> "
@@ -63,7 +71,22 @@ class Pipeline:
         res.rohs_status = self._status_for(DocType.ROHS, res, search)
         res.reach_status = self._status_for(DocType.REACH, res, search)
         res.reasons = self._reasons(res, search)
+        self._lifecycle_and_longevity(item, adapter, res)
         return res
+
+    def _lifecycle_and_longevity(self, item: BomItem, adapter, res: ItemResult) -> None:
+        if self.settings.check_lifecycle:
+            try:
+                res.lifecycle = self.lifecycle.lifecycle(item, adapter)
+            except Exception as exc:  # opcja dodatkowa nie może przerwać przebiegu
+                log.exception("Lifecycle: błąd dla %s", item.mpn)
+                res.lifecycle = LifecycleInfo(note=f"błąd: {exc}")
+        if self.settings.check_longevity:
+            try:
+                res.longevity = self.lifecycle.longevity(item, adapter)
+            except Exception as exc:
+                log.exception("Longevity: błąd dla %s", item.mpn)
+                res.longevity = LongevityInfo(note=f"błąd: {exc}")
 
     def _download_candidates(self, item: BomItem, search: SearchResult, res: ItemResult) -> None:
         cands = sorted(search.candidates, key=lambda c: _SCOPE_ORDER[c.scope])

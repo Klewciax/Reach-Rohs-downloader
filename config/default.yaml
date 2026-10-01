@@ -38,3 +38,9 @@ requester_name: "[Your Name]"
 requester_company: "[Your Company]"
 requester_email: "[your.email@company.com]"
 project_name: "[Product / Project name]"
+
+# --- Opcje dodatkowe (można też włączyć flagami --lifecycle / --longevity) ---
+check_lifecycle: false            # status cyklu życia (Active / NRND / Last Time Buy / Obsolete) ze strony producenta
+check_longevity: false            # program longevity producenta: czy MPN/rodzina jest objęta i do kiedy
+save_lifecycle_snapshots: true    # zapis kopii strony producenta, z której odczytano status (dowód)
+download_longevity_documents: true  # pobieranie oficjalnych polityk EOL / longevity producenta (PDF)

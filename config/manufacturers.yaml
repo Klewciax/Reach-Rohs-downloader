@@ -12,6 +12,10 @@
 #   contact_pages      – strony kontaktowe / formularze (raport "Do uzyskania mailowo")
 #   search_urls        – opcjonalne szablony wyszukiwarki na stronie producenta, {mpn} = MPN
 #   general_documents  – ogólne oświadczenia producenta (scope: general / family)
+#   product_pages      – (opcja --lifecycle) szablony stron produktu; pola: {mpn} {mpn_lower} {base} {base_lower}
+#                        ({base} = MPN bez sufiksu obudowy/opakowania, np. ATMEGA328P-AU -> ATMEGA328P)
+#   longevity_pages    – (opcja --longevity) listy programów longevity / strony polityki EOL
+#   longevity_documents– (opcja --longevity) PDF-y z programem longevity / polityką EOL
 #
 # ZASADA: wpisujemy wyłącznie URL-e znalezione na oficjalnej domenie producenta.
 # Wszystkie URL-e z tego pliku są przy każdym uruchomieniu weryfikowane (HTTP 200,
@@ -50,6 +54,10 @@ manufacturers:
         types: [RoHS]
         scope: general
         title: "TI RoHS and Product Statement Designation"
+    product_pages:
+      - https://www.ti.com/store/ti/en/p/product/?p={mpn}
+    longevity_pages:
+      - https://www.ti.com/support-quality/quality-policies-procedures/product-life-cycle.html
 
   analog_devices:
     name: Analog Devices
@@ -83,6 +91,10 @@ manufacturers:
         types: [RoHS]
         scope: general
         title: "Analog Devices RoHS Position Statement"
+    product_pages:
+      - https://www.analog.com/en/products/{base_lower}.html
+    longevity_pages:
+      - https://www.analog.com/en/support/product-life-cycle-information.html
 
   stmicroelectronics:
     name: STMicroelectronics
@@ -104,6 +116,14 @@ manufacturers:
     contact_pages:
       # Formularz Online Support; kategoria zgłoszenia "Environment, Health & Safety"
       - https://my.st.com/ols
+    product_pages:
+      - https://estore.st.com/en/{mpn_lower}-cpn.html
+    longevity_pages:
+      - https://www.st.com/content/st_com/en/about/quality-and-reliability/product-longevity.html
+    longevity_documents:
+      - url: https://www.st.com/resource/en/product_presentation/mems_longevity.pdf
+        title: "ST sensors 10-year longevity program"
+        scope: family
 
   microchip:
     name: Microchip Technology
@@ -138,6 +158,17 @@ manufacturers:
         types: [RoHS]
         scope: general
         title: "Microchip IC & Module RoHS Certificate of Compliance"
+    product_pages:
+      - https://www.microchip.com/en-us/product/{base}
+    longevity_pages:
+      - https://www.microchip.com/en-us/support/quality/product-longevity
+    longevity_documents:
+      - url: https://ww1.microchip.com/downloads/aemDocuments/documents/quality---reliability/Product-Longevity.pdf
+        title: "Microchip – Our Practice on Product Longevity"
+        scope: general
+      - url: https://ww1.microchip.com/downloads/en/Quality_ReliabilityDocs/EOL_Policy.pdf
+        title: "Microchip – Product Life Cycle / End of Life policy"
+        scope: general
 
   onsemi:
     name: onsemi
@@ -162,6 +193,10 @@ manufacturers:
         types: [REACH]
         scope: general
         title: "onsemi Compliance with REACH"
+    product_pages:
+      - https://onsemi.com/PowerSolutions/product.do?id={mpn}
+    longevity_pages:
+      - https://www.onsemi.com/products/product-services/find-replace-obsolete-eol-products
 
   nexperia:
     name: Nexperia
@@ -200,6 +235,10 @@ manufacturers:
         types: [REACH]
         scope: general
         title: "NXP Statement on EU REACH Provisions"
+    product_pages:
+      - https://www.nxp.com/webapp/search.partspiecedetail.framework?PART_NUMBER={mpn}
+    longevity_pages:
+      - https://www.nxp.com/products/nxp-product-information/nxp-product-programs/product-longevity:PRDCT_LONGEVITY_HM
 
   infineon:
     name: Infineon Technologies
@@ -219,6 +258,12 @@ manufacturers:
     contact_pages: []
 
   # --- Producenci obsługiwani przez mechanizm generyczny (crawl stron compliance) ---
+    product_pages:
+      - https://www.infineon.com/part/{mpn}
+    longevity_pages:
+      - https://www.infineon.com/product-information/product-longevity-program
+      - https://www.infineon.com/product-information/product-longevity-program/microcontroller
+
   vishay:
     name: Vishay
     adapter: generic
@@ -350,3 +395,6 @@ manufacturers:
       - https://www.renesas.com/en/support/environmental/environmental-compliance
       - https://www.renesas.com/en/support/environmental/environmental-compliance/how-find-rohs-compliance-certificate-part-name
     contact_pages: []
+    longevity_pages:
+      - https://www.renesas.com/en/support/product-longevity-program-plp
+      - https://www.renesas.com/en/product-longevity-program-plp-former-dialog-products

@@ -1,0 +1,13 @@
+# Znane części używane przez smoke test LIVE (python -m bom_compliance.smoke --live).
+# Każdy numer pochodzi z oficjalnej strony danego producenta (stan 2026-10).
+# Smoke test sprawdza, czy adaptery / wzorce URL nadal działają z prawdziwymi serwisami.
+parts:
+  texas_instruments: LM358DR
+  analog_devices: LTC1044CS8
+  stmicroelectronics: STM32F103C8T6
+  microchip: ATMEGA328P-AU
+  onsemi: NDS331N
+  nexperia: BAS16
+  nxp: S912XEG128J2CAAR
+  infineon: BSC014N04LS
+  vishay: CRCW060310K0FKEA

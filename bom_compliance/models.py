@@ -9,6 +9,7 @@ class DocType(str, enum.Enum):
     ROHS = "RoHS"
     REACH = "REACH"
     MCD = "MCD"  # material content / composition declaration (IPC-1752 itp.)
+    LONGEVITY = "LONGEVITY"  # deklaracja / polityka długości produkcji (longevity, EOL policy)
 
 
 class Scope(str, enum.Enum):
@@ -42,6 +43,9 @@ class ManufacturerInfo:
     contact_pages: list[str] = field(default_factory=list)
     search_urls: list[str] = field(default_factory=list)
     general_documents: list[dict] = field(default_factory=list)
+    product_pages: list[str] = field(default_factory=list)  # szablony stron produktu ({mpn}, {base})
+    longevity_pages: list[str] = field(default_factory=list)  # strony / listy programu longevity
+    longevity_documents: list[dict] = field(default_factory=list)  # polityki EOL / longevity (PDF)
 
 
 @dataclass
@@ -88,6 +92,7 @@ class Candidate:
     source_page: str = ""
     allow_html: bool = False  # czy strona HTML sama w sobie jest dokumentem
     note: str = ""
+    fixed_types: bool = False  # nie klasyfikuj rodzaju z treści (np. polityka longevity)
 
 
 @dataclass
@@ -121,6 +126,43 @@ class DownloadedDoc:
     shared: bool = False  # ten sam plik użyty dla wielu pozycji BoM
 
 
+class LifecycleStatus(str, enum.Enum):
+    ACTIVE = "ACTIVE"                # w produkcji / zalecany
+    PREVIEW = "PREVIEW"              # przed produkcją (preview, sampling, proposal)
+    MATURE = "MATURE"                # dojrzały – w produkcji, ale bez rozwoju
+    NRND = "NRND"                    # not recommended for new designs
+    LAST_TIME_BUY = "LAST_TIME_BUY"  # ogłoszony koniec produkcji, okres ostatnich zamówień
+    OBSOLETE = "OBSOLETE"            # EOL / discontinued / obsolete
+    UNKNOWN = "UNKNOWN"
+
+
+@dataclass
+class LifecycleInfo:
+    status: LifecycleStatus = LifecycleStatus.UNKNOWN
+    label: str = ""           # dokładna etykieta ze strony producenta (np. "Not Recommended for new designs")
+    scope: str = ""           # "part" – etykieta przy dokładnym MPN; "page" – status strony produktu/rodziny
+    source_url: str = ""
+    evidence: str = ""        # fragment tekstu, z którego odczytano status
+    checked_at: str = ""
+    snapshot: str = ""        # ścieżka do zapisanej kopii strony (dowód)
+    note: str = ""
+
+
+@dataclass
+class LongevityInfo:
+    found: bool = False
+    program: str = ""         # nazwa programu / polityki
+    years: int | None = None  # zadeklarowany okres (lata)
+    start_year: int | None = None
+    end_year: int | None = None   # do kiedy (jawnie lub start + lata)
+    end_basis: str = ""       # "explicit" / "start+years" / ""
+    scope: str = ""           # part / family / general
+    source_url: str = ""
+    evidence: str = ""
+    docs: list["DownloadedDoc"] = field(default_factory=list)
+    note: str = ""
+
+
 @dataclass
 class ItemResult:
     item: BomItem
@@ -130,6 +172,8 @@ class ItemResult:
     reasons: list[str] = field(default_factory=list)
     manual_urls: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    lifecycle: LifecycleInfo | None = None
+    longevity: LongevityInfo | None = None
 
     def docs_for(self, doc_type: DocType) -> list[DownloadedDoc]:
         order = {Scope.PART: 0, Scope.FAMILY: 1, Scope.GENERAL: 2}

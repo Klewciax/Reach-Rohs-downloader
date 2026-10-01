@@ -26,3 +26,7 @@ include = ["bom_compliance*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "smoke: szybkie testy całego narzędzia (offline)",
+    "live: testy wykonujące prawdziwe zapytania do stron producentów (wymaga BOM_LIVE_SMOKE=1)",
+]

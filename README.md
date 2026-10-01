@@ -27,8 +27,35 @@ Testy (bez dostępu do sieci, HTTP jest mockowane):
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest
+python -m pytest              # wszystkie testy (jednostkowe + smoke offline)
+python -m pytest -m smoke     # tylko smoke testy
 ```
+
+## Smoke testy
+
+Smoke testy szybko sprawdzają, czy narzędzie działa jako całość. Są dwa tryby:
+
+```bash
+# OFFLINE: bez sieci, nadaje się do CI
+python -m bom_compliance.smoke
+
+# LIVE: prawdziwe zapytania do stron producentów (z zachowaniem limitów tempa)
+python -m bom_compliance.smoke --live
+python -m bom_compliance.smoke --live --only onsemi --only nxp --lifecycle --longevity
+
+# LIVE jako test pytest
+BOM_LIVE_SMOKE=1 python -m pytest -m live -s
+```
+
+| tryb | co sprawdza |
+|---|---|
+| offline | konfiguracja i rejestr wczytują się poprawnie, aliasy nie mają konfliktów, **każdy URL i szablon w `manufacturers.yaml` leży na domenie producenta**, wszystkie adaptery istnieją, przykładowy BoM się parsuje; w pytest dodatkowo: `--help`, `--dry-run`, kody błędów CLI oraz pełny przebieg na przykładowym BoM ze wszystkimi opcjami (sieć zamockowana) |
+| live | każdy skonfigurowany URL producenta odpowiada (200; logowanie i robots są zgłaszane jako ostrzeżenie), wzorce stron produktu działają, a adaptery znajdują dokumenty dla znanych części z [`config/smoke_parts.yaml`](config/smoke_parts.yaml) |
+
+Kody wyjścia: `0` OK, `1` błąd konfiguracji albo nieaktualny URL (404/410, przekierowanie poza
+domenę producenta), `2` problem z siecią (nic nie udało się sprawdzić). Tryb live warto uruchamiać
+okresowo, bo serwisy producentów się zmieniają. W GitHub Actions (`.github/workflows/tests.yml`)
+smoke offline działa przy każdym pushu, a live można uruchomić ręcznie (*Run workflow → live*).
 
 ## Format BoM
 
@@ -71,6 +98,9 @@ python -m bom_compliance examples/bom_example.csv --dry-run
 # pełne uruchomienie
 python -m bom_compliance examples/bom_example.csv -o output -v
 
+# dodatkowo status cyklu życia (Active/NRND/EOL) i deklaracje długości produkcji
+python -m bom_compliance examples/bom_example.csv -o output --lifecycle --longevity
+
 # z własną konfiguracją, wolniejszym tempem i tylko dla wybranych producentów
 python -m bom_compliance bom.xlsx -c my_config.yaml --delay 5 --only TI --only onsemi
 ```
@@ -87,6 +117,8 @@ Najważniejsze opcje (pełna lista: `--help`):
 | `--delay`, `--timeout`, `--retries` | tempo zapytań na host, timeout odczytu, liczba ponowień |
 | `--no-general` | nie pobieraj ogólnych oświadczeń producentów |
 | `--no-contacts` | nie szukaj kontaktów do listy „Do uzyskania mailowo” |
+| `--lifecycle` | (opcja) status cyklu życia komponentu ze strony producenta: Active / NRND / Last Time Buy / EOL |
+| `--longevity` | (opcja) deklaracja długości produkcji: program longevity producenta i „do kiedy” |
 | `--dry-run` | tylko wczytaj i zdeduplikuj BoM |
 
 ## Wynik
@@ -101,10 +133,11 @@ output/
 │   └── Texas_Instruments/
 │       └── _shared/                       ← dokumenty zbiorcze / ogólne (pobierane raz, wspólne dla wielu MPN)
 │           └── Texas_Instruments__REACH__general__szzq087__9f8e7d6c.pdf
-├── report.xlsx            ← Podsumowanie | Pozycje | Pliki | Do uzyskania mailowo | Szablony e-mail | Niepoprawne wiersze
+├── report.xlsx            ← Podsumowanie | Pozycje | Cykl życia i longevity* | Pliki | Do uzyskania mailowo | Szablony e-mail | Niepoprawne wiersze
 ├── report_items.csv       ← tabela per pozycja (separator ";", UTF-8 z BOM, otwiera się wprost w Excelu)
 ├── report_files.csv       ← wszystkie pobrane pliki: ścieżka, URL źródłowy, URL końcowy, data UTC, SHA-256
 ├── report_to_request.csv  ← „Do uzyskania mailowo”, pogrupowane per producent
+├── report_lifecycle.csv   ← (opcje --lifecycle/--longevity) status cyklu życia i longevity per pozycja
 ├── email_templates/<Producent>.txt  ← jeden zbiorczy e-mail (EN) na producenta + znaleziony kontakt
 └── run.log                ← pełny log (DEBUG)
 ```
@@ -128,6 +161,59 @@ Rodzaj dokumentu (RoHS / REACH / MCD) i jego zakres są ustalane **na podstawie 
 pobranego pliku (tekst z PDF/XML/XLSX). Narzędzie sprawdza, czy w treści występuje MPN, a jeśli
 nie, to czy występuje prefiks rodziny. Gdy tekstu nie da się odczytać (np. skan), raport podaje
 „MPN potwierdzony w treści: unknown” z adnotacją „do ręcznej weryfikacji”.
+
+## Opcja: status cyklu życia (`--lifecycle`)
+
+Dla każdej pozycji narzędzie otwiera stronę produktu **na oficjalnej stronie producenta**
+(szablony `product_pages` w `manufacturers.yaml`) i odczytuje oznaczenie statusu. Etykiety producentów
+są normalizowane do wspólnej skali:
+
+| status | przykładowe etykiety producentów |
+|---|---|
+| ACTIVE | Active, In Production, Production, Recommended for new designs, active and preferred |
+| PREVIEW | Preview, Proposal, Sampling, Pre-production |
+| MATURE | Mature |
+| NRND | Not Recommended for New Designs, NRND, not for new design |
+| LAST_TIME_BUY | Last Time Buy, LIFEBUY, Last Shipments |
+| OBSOLETE (EOL) | Obsolete, Discontinued, End of Life, EOL |
+| UNKNOWN | brak etykiety albo strona niedostępna → do ręcznej weryfikacji |
+
+- **Zakres statusu.** „Dla MPN” oznacza, że etykieta stoi przy dokładnym numerze zamówieniowym,
+  np. w tabeli wariantów (`LM358DR Active` obok `LM358DRG3 Obsolete` daje ACTIVE). „Strona produktu /
+  rodziny” oznacza status strony produktu bazowego, np. Microchip `ATMEGA328P` dla `ATMEGA328P-AU`.
+  Taki status jest wyraźnie oznaczony w raporcie.
+- **Dowody.** Raport zawiera etykietę dosłownie ze strony, URL, datę sprawdzenia, fragment tekstu
+  oraz zapisaną kopię strony (`documents/<Producent>/<MPN>/…__LIFECYCLE__<data>.html`).
+- **Linki nawigacyjne** typu „Find Obsolete/EOL products” nie są brane za status. Liczy się tylko
+  etykieta „Status: …” albo wartość przy MPN.
+- **Ostrzeżenia.** Komponenty NRND, LTB i EOL są wypisywane w konsoli. W XLSX mają kolorowy status
+  w arkuszu „Cykl życia i longevity”.
+
+Strony produktu skonfigurowane są dla: TI (strona sklepu TI dla MPN), ADI, ST (eStore CPN), Microchip,
+onsemi, NXP i Infineon. Dla pozostałych producentów dopisz `product_pages` w `manufacturers.yaml`.
+
+## Opcja: deklaracja długości produkcji (`--longevity`)
+
+Narzędzie szuka deklaracji producenta, jak długo komponent będzie produkowany. Sprawdza po kolei:
+
+1. **Stronę produktu.** Jeśli zawiera zapis „longevity … N years / until RRRR”, to ten zapis.
+2. **Listy programów longevity producenta** (`longevity_pages`), np. ST Product Longevity, NXP Product
+   Longevity, Renesas PLP, Infineon Longevity Program. Szuka dokładnego MPN, a jeśli go nie ma,
+   prefiksu rodziny, i odczytuje okres (lata), rok początku oraz rok końca. Z tabel bierze wartości
+   z kolumn nazwanych wprost („End date”, „Launch”, „Longevity (years)”).
+3. **Dokumenty longevity / polityki EOL** (`longevity_documents`), np. Microchip „Product Longevity”
+   i „End of Life policy” albo lista ST sensors 10-year longevity. Są pobierane, zapisywane jak inne
+   dokumenty (z URL i datą) i przeszukiwane pod kątem MPN.
+
+„Do kiedy (rok)” narzędzie ustala tak:
+- data końcowa podana wprost → `explicit`;
+- rok początku plus okres → `start+years`;
+- w przeciwnym razie pole zostaje puste z adnotacją „do ręcznej weryfikacji”.
+
+Jeśli producent ma tylko ogólną politykę (np. Microchip „client-driven obsolescence”, bez daty
+dla MPN), raport pokazuje „NIE” i link do polityki. Pozycja trafia wtedy na listę „Do uzyskania
+mailowo”, a szablon e-maila zawiera prośbę o status cyklu życia i deklarację longevity (do kiedy
+produkcja, polityka powiadomień EOL).
 
 ## Gwarancja pochodzenia plików
 
@@ -194,7 +280,19 @@ do `config/manufacturers.yaml`:
       - url: https://www.acme-components.com/docs/reach-statement.pdf
         types: [REACH]
         scope: general
+    product_pages:                          # opcja --lifecycle: strona produktu ({mpn} {mpn_lower} {base} {base_lower})
+      - https://www.acme-components.com/product/{base}
+    longevity_pages:                        # opcja --longevity: lista programu longevity
+      - https://www.acme-components.com/longevity
+    longevity_documents:                    # opcja --longevity: polityka EOL / longevity (PDF)
+      - url: https://www.acme-components.com/docs/eol-policy.pdf
+        title: "ACME EOL policy"
+        scope: general
 ```
+
+Po dodaniu producenta uruchom `python -m bom_compliance.smoke`, a jeśli masz dostęp do sieci,
+także `--live --only acme`. Smoke test od razu pokaże URL spoza domeny producenta albo nieaktualny
+adres. Dla trybu live dopisz znaną część producenta do `config/smoke_parts.yaml`.
 
 **2. Dedykowany adapter**, gdy producent ma API albo stały wzorzec URL. Dodaj klasę
 w `bom_compliance/adapters/` i zarejestruj ją w `ADAPTERS` w `bom_compliance/adapters/__init__.py`:

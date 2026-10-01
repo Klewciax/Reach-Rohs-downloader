@@ -48,6 +48,12 @@ class Settings:
     max_docs_per_item: int = 6
     pdf_text_pages: int = 6  # ile stron PDF analizować przy klasyfikacji
 
+    # Opcje dodatkowe: cykl życia i longevity
+    check_lifecycle: bool = False      # status Active / NRND / EOL ze strony producenta
+    check_longevity: bool = False      # program longevity / deklaracja długości produkcji
+    save_lifecycle_snapshots: bool = True  # zapisuj kopię strony, z której odczytano status
+    download_longevity_documents: bool = True  # pobieraj polityki EOL / longevity producenta
+
     # Raport / e-mail
     requester_name: str = "[Your Name]"
     requester_company: str = "[Your Company]"

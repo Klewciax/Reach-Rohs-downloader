@@ -47,6 +47,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Przetwarzaj tylko wskazanych producentów (nazwa/alias; wielokrotnie)")
     p.add_argument("--no-general", action="store_true", help="Nie pobieraj ogólnych oświadczeń producentów")
     p.add_argument("--no-contacts", action="store_true", help="Nie wyszukuj kontaktów na stronach producentów")
+    p.add_argument("--lifecycle", action="store_true",
+                   help="Sprawdź status cyklu życia (Active / NRND / Last Time Buy / EOL) na stronie producenta")
+    p.add_argument("--longevity", action="store_true",
+                   help="Sprawdź programy longevity producenta (do kiedy produkcja) i pobierz polityki EOL/longevity")
     p.add_argument("--dry-run", action="store_true", help="Tylko wczytaj i zdeduplikuj BoM, bez zapytań sieciowych")
     p.add_argument("-v", "--verbose", action="count", default=0, help="Więcej logów (-v, -vv)")
     return p
@@ -63,6 +67,8 @@ def main(argv: list[str] | None = None) -> int:
         "output_dir": args.output, "manufacturers_file": args.manufacturers, "columns": cols or None,
         "sheet": args.sheet, "min_delay_per_host": args.delay, "read_timeout": args.timeout,
         "max_retries": args.retries, "download_general_statements": False if args.no_general else None,
+        "check_lifecycle": True if args.lifecycle else None,
+        "check_longevity": True if args.longevity else None,
     }
     try:
         settings = Settings.load(args.config, overrides)

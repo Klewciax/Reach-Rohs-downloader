@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from urllib.parse import quote, urljoin, urldefrag
 
@@ -59,6 +60,27 @@ class BaseAdapter:
 
     def find_part_documents(self, mpn: str, ctx: AdapterContext, result: SearchResult) -> None:
         """Do nadpisania: dodaj kandydatów (result.add) dla konkretnego MPN."""
+
+    # ------------------------------------------------- cykl życia / longevity
+    @staticmethod
+    def base_part(mpn: str) -> str:
+        """Numer produktu bez sufiksów obudowy/opakowania (np. ATMEGA328P-AU -> ATMEGA328P)."""
+        return re.split(r"[-/#,. ]", mpn.strip())[0] or mpn.strip()
+
+    def product_page_urls(self, mpn: str, ctx: AdapterContext) -> list[str]:
+        """Strony produktu, z których odczytywany jest status cyklu życia.
+
+        Domyślnie z szablonów `product_pages` w manufacturers.yaml; obsługiwane pola:
+        {mpn}, {mpn_lower}, {base}, {base_lower}. Adapter może nadpisać metodę.
+        """
+        base = self.base_part(mpn)
+        out = []
+        for tpl in ctx.manufacturer.product_pages:
+            url = tpl.format(mpn=self.q(mpn), mpn_lower=self.q(mpn.lower()),
+                             base=self.q(base), base_lower=self.q(base.lower()))
+            if url not in out:
+                out.append(url)
+        return out
 
     # ---------------------------------------------------------------- helpers
     @staticmethod
