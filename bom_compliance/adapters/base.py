@@ -67,20 +67,24 @@ class BaseAdapter:
         """Numer produktu bez sufiksów obudowy/opakowania (np. ATMEGA328P-AU -> ATMEGA328P)."""
         return re.split(r"[-/#,. ]", mpn.strip())[0] or mpn.strip()
 
-    def product_page_urls(self, mpn: str, ctx: AdapterContext) -> list[str]:
-        """Strony produktu, z których odczytywany jest status cyklu życia.
+    def product_pages_detailed(self, mpn: str, ctx: AdapterContext) -> list[tuple[str, bool]]:
+        """(URL strony produktu, czy URL zbudowano z numeru bazowego {base}).
 
-        Domyślnie z szablonów `product_pages` w manufacturers.yaml; obsługiwane pola:
-        {mpn}, {mpn_lower}, {base}, {base_lower}. Adapter może nadpisać metodę.
+        Szablony `product_pages` z manufacturers.yaml; pola: {mpn}, {mpn_lower}, {base}, {base_lower}.
+        Adapter może nadpisać metodę.
         """
         base = self.base_part(mpn)
-        out = []
+        out: list[tuple[str, bool]] = []
         for tpl in ctx.manufacturer.product_pages:
             url = tpl.format(mpn=self.q(mpn), mpn_lower=self.q(mpn.lower()),
                              base=self.q(base), base_lower=self.q(base.lower()))
-            if url not in out:
-                out.append(url)
+            if url not in (u for u, _ in out):
+                out.append((url, "{base" in tpl))
         return out
+
+    def product_page_urls(self, mpn: str, ctx: AdapterContext) -> list[str]:
+        """Strony produktu, z których odczytywany jest status cyklu życia / forma MPN."""
+        return [u for u, _ in self.product_pages_detailed(mpn, ctx)]
 
     # ---------------------------------------------------------------- helpers
     @staticmethod

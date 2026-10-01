@@ -59,41 +59,117 @@ smoke offline działa przy każdym pushu, a live można uruchomić ręcznie (*Ru
 
 ## Format BoM
 
-Obsługiwane formaty: `.csv` / `.tsv` (separator wykrywany automatycznie: `,` `;` tab `|`;
-kodowanie UTF-8, CP1250 albo Latin-1) oraz `.xlsx`. W XLSX nagłówek nie musi być w pierwszym
-wierszu, bo narzędzie szuka go w pierwszych 30 wierszach.
+Obsługiwane formaty:
+- `.xlsx` / `.xlsm`;
+- `.xls` (Excel 97-2003, przez `xlrd`);
+- `.csv` / `.tsv`: separator wykrywany automatycznie (`,` `;` tab `|`), kodowanie UTF-8, CP1250 albo Latin-1.
 
-Wymagane są kolumny z **MPN** i **producentem**. Opcjonalne: ref. designatory, ilość.
-Kolumny są rozpoznawane automatycznie po typowych nazwach, np.:
+Narzędzie samo bada plik i wypisuje wynik analizy przed przetwarzaniem (`--dry-run` pokazuje
+tylko analizę):
 
-| kolumna logiczna | przykładowe rozpoznawane nagłówki |
-|---|---|
-| `mpn` | MPN, Manufacturer Part Number, Mfr. Part #, Mfg Part Number, Part Number |
-| `manufacturer` | Manufacturer, Mfr., Mfg, Manufacturer Name, Producent |
-| `refdes` | Designator, Reference, RefDes, Ref Des |
-| `quantity` | Qty, Quantity, Ilość |
-
-Jeśli nazwy kolumn w pliku są inne, podaj mapowanie w CLI (`--col`) albo w pliku konfiguracyjnym
-(`columns:`):
-
-```bash
-python -m bom_compliance bom.xlsx --col mpn="Supplier PN" --col manufacturer="Maker Name" --col refdes=Ref
+```
+Analiza arkuszy BoM:
+  - 'Strona tytułowa': brak kolumn MPN / producent
+  - 'BOM': WYBRANY – zawiera BoM (nagłówek w wierszu 3, 11 wierszy danych, kolumny wg nagłówków:
+           mpn='Nr kat.', manufacturer='Producent', refdes='Oznaczenie', quantity='Ilość', zamienniki: 1 par kolumn)
+  - 'Historia zmian': brak kolumn MPN / producent
 ```
 
-Przykład: [`examples/bom_example.csv`](examples/bom_example.csv).
+### Arkusze (karty Excela)
+
+- **Każdy arkusz jest analizowany**, łącznie z ukrytymi. Puste okładki, strony tytułowe i historie
+  zmian są pomijane.
+- Domyślnie wybierany jest arkusz z **największą liczbą wierszy BoM** (widoczne mają pierwszeństwo).
+- `--sheet all` łączy wszystkie arkusze z BoM, np. osobne karty dla kilku płytek. Wiersze w raporcie
+  mają wtedy postać `Arkusz!wiersz`, a ten sam MPN z kilku kart to jedna pozycja.
+- `--sheet NAZWA` albo `--sheet 2` (numer od 1) wymusza konkretny arkusz.
+- Nagłówek może być w dowolnym z pierwszych 40 wierszy (nad tabelą mogą być tytuł i rewizja).
+  Obsługiwane są też nagłówki dwupoziomowe, np. „Manufacturer” nad „Name” / „Part Number”.
+
+### Kolumny
+
+Kolumny są rozpoznawane w trzech krokach:
+
+1. **Po nagłówkach**, również polskich:
+
+   | kolumna logiczna | przykładowe nagłówki |
+   |---|---|
+   | `mpn` | MPN, Manufacturer Part Number, Mfr. Part #, Mfg PN, Nr kat., Numer katalogowy, Kod producenta, Part Number |
+   | `manufacturer` | Manufacturer, Mfr., Mfg, Producent, Wytwórca, Brand |
+   | `refdes` | Designator, Reference, RefDes, Oznaczenie, Pozycja na schemacie |
+   | `quantity` | Qty, Quantity, Ilość, Szt. |
+
+2. **Weryfikacja zawartością.** Jeśli kolumna wskazana nagłówkiem nie zawiera numerów części (np.
+   „Part” z opisami albo numerami wewnętrznymi firmy), a inna kolumna je zawiera, narzędzie przełącza
+   się na nią i wypisuje ostrzeżenie. Tak samo dla producenta.
+3. **Po zawartości, gdy nagłówków nie da się rozpoznać.** Kolumna producenta to ta, której wartości
+   rozpoznaje rejestr producentów. Kolumna MPN to ta, której wartości wyglądają jak numery części
+   (z wyłączeniem ref. designatorów i ilości). Takie mapowanie jest zawsze oznaczone
+   „zweryfikuj”.
+
+Zawsze można też podać mapowanie jawnie: `--col mpn="Nr kat." --col manufacturer="Producent"`
+albo `columns:` w pliku konfiguracyjnym.
+
+**Zamienniki (2. źródło).** Kolumny „Manufacturer 2 / MPN 2”, „Producent 2 / Nr kat. 2”,
+„Alt Manufacturer / Alt MPN” są wykrywane automatycznie. Każdy zamiennik to osobna pozycja
+oznaczona „Zamiennik = TAK”, z tymi samymi ref. designatorami. Wyłączenie: `--no-alternates`.
+
+### MPN: skrót czy pełny numer
+
+MPN w BoM bywa pełnym numerem zamówieniowym (`LM358DR`, `ATMEGA328P-AU`, `BAS16,215`), skrótem
+lub nazwą produktu (`LM358`, `ATMEGA328P`) albo wzorcem rodziny (`CRCW0603xxxxFKEA`, `STM32F103C8T*`).
+Narzędzie to bada:
+
+1. **Czyszczenie komórki** (każda zmiana trafia do kolumny „Uwagi do MPN”):
+   - usuwany jest prefiks producenta (`TI LM358DR` → `LM358DR`) i dopisany opis
+     (`LM358DR (SOIC-8)` → `LM358DR`);
+   - z kilku numerów w jednej komórce (nowa linia, `;`) pierwszy jest główny, a reszta to zamienniki;
+   - `/` i `,` należą do MPN (`TJA1051T/3`, `BAS16,215`) i nie dzielą numerów;
+   - MPN zapisany w Excelu jako liczba (np. Würth `7443556082`) jest oznaczany, bo można było
+     stracić zera wiodące.
+2. **Podpowiedzi z BoM.** Jeśli w innej kolumnie wiersza (np. w opisie) jest dłuższy numer
+   zaczynający się od MPN (`LM358` → w opisie `LM358DR`), zapisuje go jako kandydata na pełny MPN.
+3. **Sprawdzenie na stronie producenta** (strona produktu z `product_pages`):
+   - **pełny (potwierdzony)**: numer występuje na stronie samodzielnie;
+   - **skrócony**: na stronie są tylko dłuższe numery (warianty zamówieniowe) albo MPN jest nazwą
+     produktu bazowego z listą wariantów. Narzędzie rozwija skrót do pełnego numeru, gdy kandydat
+     z opisu w BoM jest na liście wariantów producenta albo gdy producent ma tylko jeden wariant.
+     Każde rozwinięcie jest oznaczone w raporcie „MPN rozwinięty automatycznie … – zweryfikuj”.
+     Przy wielu wariantach raport wypisuje je wszystkie i prosi o uzupełnienie pełnego numeru w BoM.
+   - **wzorzec rodziny**: wyszukiwanie po stałej części wzorca;
+   - **nie znaleziono na stronie producenta**: prawdopodobna literówka w BoM.
+
+   Wyłączenie: `--no-mpn-check`. Bez rozwijania skrótów: `expand_abbreviated_mpn: false`.
+4. **Dopasowanie dokumentu do MPN uwzględnia granice numeru.** Dokument dla `LM358DRG4`,
+   `ATMEGA328P-AU` czy `LTC3780EG#PBF` **nie** jest uznawany za dokument dla `LM358DR`,
+   `ATMEGA328P` czy `LTC3780EG`. Taki dokument dotyczy innego wariantu i jest oznaczany jako
+   zbiorczy. Dla skrótów i wzorców dokument jest zawsze najwyżej „zbiorczy”, bo nie potwierdza
+   konkretnego wariantu.
+5. **Sufiksy opakowania.** Gdy dla pełnego numeru z sufiksem (`#PBF`, `,215`, `/NOPB`, `-TR`, `+`)
+   nic nie znaleziono, narzędzie szuka także formy bez sufiksu. Wynik oznacza jako dokument
+   zbiorczy, bo np. `LTC3780EG` i `LTC3780EG#PBF` mogą mieć różny status RoHS.
+
+Kolumny raportu dotyczące MPN: „Arkusz”, „Zamiennik (2. źródło)”, „Komórka MPN (oryginał)”,
+„Forma MPN”, „MPN użyty do wyszukiwania”, „Numery u producenta zaczynające się od MPN”,
+„Uwagi do MPN”. W mailu do producenta skrót jest opisany jako „base part number – please cover
+all orderable variants”.
 
 **Walidacja i deduplikacja**
 - Puste wiersze są pomijane. Wiersze bez MPN, z MPN typu `N/A`/`DNP`/`TBD` albo bez konkretnego
   producenta (`Generic`, puste pole) trafiają do arkusza „Niepoprawne wiersze” razem z powodem.
-- Pozycje są deduplikowane po parze *(znormalizowany producent, MPN bez separatorów)*. Ten sam MPN
-  w kilku wierszach lub z wieloma ref. designatorami oznacza jedno pobranie. Ten sam MPN
-  u **różnych** producentów to dwie osobne pozycje.
+- Pozycje są deduplikowane po parze *(znormalizowany producent, MPN bez separatorów)*, także między
+  arkuszami. Ten sam MPN u **różnych** producentów to dwie osobne pozycje.
+
+Przykłady: [`examples/bom_example.csv`](examples/bom_example.csv) oraz
+[`examples/bom_example_multisheet.xlsx`](examples/bom_example_multisheet.xlsx) (okładka, BoM na
+2. karcie, polskie nagłówki, zamienniki, skróty i wzorce MPN; generator:
+`python examples/make_example_xlsx.py`).
 
 ## Uruchomienie
 
 ```bash
-# sprawdzenie, jak BoM zostanie zinterpretowany (bez zapytań sieciowych)
-python -m bom_compliance examples/bom_example.csv --dry-run
+# sprawdzenie, jak BoM zostanie zinterpretowany: arkusze, kolumny, MPN (bez zapytań sieciowych)
+python -m bom_compliance examples/bom_example_multisheet.xlsx --dry-run
 
 # pełne uruchomienie
 python -m bom_compliance examples/bom_example.csv -o output -v
@@ -113,7 +189,9 @@ Najważniejsze opcje (pełna lista: `--help`):
 | `-c/--config` | plik YAML nadpisujący [`config/default.yaml`](config/default.yaml) (timeouty, tempo, retry, dane do e-maila) |
 | `-m/--manufacturers` | własny rejestr producentów (domyślnie [`config/manufacturers.yaml`](config/manufacturers.yaml)) |
 | `--col nazwa=Kolumna` | mapowanie kolumn |
-| `--sheet` | arkusz XLSX |
+| `--sheet` | arkusz Excela: nazwa, numer (od 1) albo `all`; domyślnie arkusz z największą liczbą wierszy BoM |
+| `--no-alternates` | pomiń zamienniki (Manufacturer 2 / MPN 2 itp.) |
+| `--no-mpn-check` | nie sprawdzaj na stronie producenta, czy MPN jest pełny czy skrócony |
 | `--delay`, `--timeout`, `--retries` | tempo zapytań na host, timeout odczytu, liczba ponowień |
 | `--no-general` | nie pobieraj ogólnych oświadczeń producentów |
 | `--no-contacts` | nie szukaj kontaktów do listy „Do uzyskania mailowo” |
@@ -331,3 +409,9 @@ sprawdzenia dopisz do `result.manual_urls`.
   i raportuje „Odmowa dostępu (403)”.
 - Dokument zbiorczy (rodzina) jest rozpoznawany heurystycznie, po prefiksie MPN w treści.
   Zawsze jest oznaczony w raporcie, żeby można go było zweryfikować.
+- Excel: komórki z formułami są czytane jako ostatnio zapisana wartość. Plik wygenerowany przez
+  program, który nie zapisuje wyników formuł, może mieć puste komórki. Wtedy otwórz go i zapisz
+  ponownie w Excelu.
+- Rozwinięcie skrótu MPN opiera się na numerach widocznych na stronie produktu producenta. Strony
+  ładujące listę wariantów przez JavaScript tego nie pokażą. MPN pozostaje wtedy bez zmian
+  z adnotacją w raporcie.

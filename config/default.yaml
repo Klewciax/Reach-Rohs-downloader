@@ -44,3 +44,8 @@ check_lifecycle: false            # status cyklu życia (Active / NRND / Last Ti
 check_longevity: false            # program longevity producenta: czy MPN/rodzina jest objęta i do kiedy
 save_lifecycle_snapshots: true    # zapis kopii strony producenta, z której odczytano status (dowód)
 download_longevity_documents: true  # pobieranie oficjalnych polityk EOL / longevity producenta (PDF)
+
+# --- Analiza BoM / MPN ---
+inspect_mpn: true               # sprawdź na stronie producenta, czy MPN jest pełnym numerem, czy skrótem
+expand_abbreviated_mpn: true    # rozwiń skrót do pełnego numeru, gdy jest jednoznaczny (oznaczane w raporcie)
+include_alternates: true        # przetwarzaj zamienniki z kolumn "Manufacturer 2 / MPN 2", "Alt MPN" itp.

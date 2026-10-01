@@ -39,7 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-m", "--manufacturers", help="Plik YAML z rejestrem producentów")
     p.add_argument("--col", action="append", default=[], metavar="NAZWA=KOLUMNA",
                    help="Mapowanie kolumn, np. --col mpn=\"Mfr Part #\" --col manufacturer=Mfr (wielokrotnie)")
-    p.add_argument("--sheet", help="Arkusz XLSX")
+    p.add_argument("--sheet", help="Arkusz Excela: nazwa, numer (od 1) albo 'all' (połącz wszystkie arkusze z BoM). "
+                                   "Domyślnie: arkusz z największą liczbą wierszy BoM")
+    p.add_argument("--no-alternates", action="store_true", help="Pomiń zamienniki (Manufacturer 2 / MPN 2 itp.)")
+    p.add_argument("--no-mpn-check", action="store_true",
+                   help="Nie sprawdzaj na stronie producenta, czy MPN jest pełny czy skrócony")
     p.add_argument("--delay", type=float, help="Minimalny odstęp między zapytaniami do hosta [s]")
     p.add_argument("--timeout", type=float, help="Timeout odczytu [s]")
     p.add_argument("--retries", type=int, help="Liczba ponowień przy 429/5xx/błędach sieci")
@@ -68,6 +72,8 @@ def main(argv: list[str] | None = None) -> int:
         "sheet": args.sheet, "min_delay_per_host": args.delay, "read_timeout": args.timeout,
         "max_retries": args.retries, "download_general_statements": False if args.no_general else None,
         "check_lifecycle": True if args.lifecycle else None,
+        "include_alternates": False if args.no_alternates else None,
+        "inspect_mpn": False if args.no_mpn_check else None,
         "check_longevity": True if args.longevity else None,
     }
     try:
@@ -93,7 +99,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         registry = ManufacturerRegistry.from_yaml(settings.manufacturers_file, settings.fuzzy_manufacturer_match,
                                                   settings.fuzzy_cutoff)
-        rows, invalid, meta = read_bom(args.bom, settings.columns, settings.sheet)
+        rows, invalid, meta = read_bom(args.bom, settings.columns, settings.sheet, registry,
+                                       settings.include_alternates)
     except (OSError, ValueError) as exc:
         print(f"Błąd: {exc}", file=sys.stderr)
         return 2
@@ -109,18 +116,36 @@ def main(argv: list[str] | None = None) -> int:
             wanted.add(m.key)
         items = [i for i in items if i.manufacturer and i.manufacturer.key in wanted]
     log.info("BoM: %d poprawnych wierszy, %d niepoprawnych, %d unikalnych pozycji", len(rows), len(invalid), len(items))
-    print(f"BoM: {len(rows)} poprawnych wierszy, {len(invalid)} niepoprawnych, {len(items)} unikalnych pozycji "
-          f"(producent + MPN).")
+    print("Analiza arkuszy BoM:")
+    for line in meta.get("sheets", []):
+        print(f"  - {line}")
+    for w in meta.get("warnings", []):
+        print(f"  UWAGA: {w}")
+    print(f"BoM: {len(rows)} poprawnych wierszy (w tym zamienników: {meta.get('alternates', 0)}), "
+          f"{len(invalid)} niepoprawnych, {len(items)} unikalnych pozycji (producent + MPN).")
     if args.dry_run:
         for i in items:
-            print(f"  {i.manufacturer_name:<28} {i.mpn:<28} dopasowanie={i.match_method:<8} "
-                  f"adapter={i.manufacturer.adapter if i.manufacturer else '-':<10} refdes={','.join(i.refdes)}")
+            flags = []
+            if i.alternate:
+                flags.append("zamiennik")
+            if i.wildcard:
+                flags.append("wzorzec")
+            if i.hints:
+                flags.append("w opisie: " + ",".join(i.hints))
+            print(f"  {i.manufacturer_name:<24} {i.mpn:<24} dopasowanie={i.match_method:<8} "
+                  f"adapter={i.manufacturer.adapter if i.manufacturer else '-':<10} refdes={','.join(i.refdes)}"
+                  + (f"  [{'; '.join(flags)}]" if flags else ""))
+            for n in i.mpn_notes:
+                print(f"      · {n}")
+        for r in invalid:
+            print(f"  ✗ wiersz {r.row_number}: {r.reason}")
         return 0
 
     pipeline = Pipeline(settings, out_dir)
 
     def progress(n, total, res):
-        print(f"[{n}/{total}] {res.item.manufacturer_name} {res.item.mpn}: "
+        shown = res.item.mpn_bom if res.item.mpn_bom == res.item.mpn else f"{res.item.mpn_bom} -> {res.item.mpn}"
+        print(f"[{n}/{total}] {res.item.manufacturer_name} {shown}: "
               f"RoHS={res.rohs_status.value} REACH={res.reach_status.value}", flush=True)
 
     try:

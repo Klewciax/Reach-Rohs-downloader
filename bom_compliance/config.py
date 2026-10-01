@@ -48,6 +48,11 @@ class Settings:
     max_docs_per_item: int = 6
     pdf_text_pages: int = 6  # ile stron PDF analizować przy klasyfikacji
 
+    # Analiza MPN / BoM
+    inspect_mpn: bool = True             # sprawdź na stronie producenta, czy MPN jest pełny czy skrócony
+    expand_abbreviated_mpn: bool = True  # rozwiń skrót, gdy wariant jest jednoznaczny (zawsze oznaczane w raporcie)
+    include_alternates: bool = True      # uwzględnij zamienniki (kolumny "Manufacturer 2 / MPN 2")
+
     # Opcje dodatkowe: cykl życia i longevity
     check_lifecycle: bool = False      # status Active / NRND / EOL ze strony producenta
     check_longevity: bool = False      # program longevity / deklaracja długości produkcji

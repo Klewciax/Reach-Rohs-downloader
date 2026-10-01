@@ -91,7 +91,7 @@ def test_full_run(tmp_path):
 
     # Nigdy nie odpytano domen spoza producentów
     hosts = {re.match(r"https?://([^/]+)", c.request.url).group(1) for c in responses.calls}
-    assert hosts <= {"www.onsemi.com", "www.nexperia.com", "www.vishay.com", "www.ti.com"}, hosts
+    assert hosts <= {"www.onsemi.com", "onsemi.com", "www.nexperia.com", "www.vishay.com", "www.ti.com"}, hosts
     # Deduplikacja: certyfikat onsemi pobrany raz mimo 3 refdes w 2 wierszach
     assert sum(1 for c in responses.calls if c.request.url == ONSEMI_COC) == 1
     # Ogólne oświadczenie TI pobrane raz dla dwóch MPN

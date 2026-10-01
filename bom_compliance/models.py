@@ -55,6 +55,12 @@ class BomRow:
     manufacturer: str
     refdes: list[str] = field(default_factory=list)
     quantity: str = ""
+    sheet: str = ""
+    mpn_raw: str = ""            # dokładna zawartość komórki MPN
+    alternate: bool = False      # zamiennik (2. źródło) z kolumn "Manufacturer 2 / MPN 2" lub z tej samej komórki
+    wildcard: bool = False
+    hints: list[str] = field(default_factory=list)  # pełne numery znalezione w innych kolumnach (opis)
+    notes: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -75,6 +81,14 @@ class BomItem:
     refdes: list[str] = field(default_factory=list)
     rows: list[int] = field(default_factory=list)
     manufacturer_variants: list[str] = field(default_factory=list)
+    mpn_bom: str = ""            # MPN z BoM po oczyszczeniu (mpn = numer używany do wyszukiwania)
+    mpn_raw: list[str] = field(default_factory=list)
+    sheets: list[str] = field(default_factory=list)
+    alternate: bool = False      # pozycja występuje wyłącznie jako zamiennik
+    wildcard: bool = False
+    hints: list[str] = field(default_factory=list)
+    mpn_notes: list[str] = field(default_factory=list)
+    mpn_check: object | None = None  # mpn.MpnCheck
 
     @property
     def manufacturer_name(self) -> str:

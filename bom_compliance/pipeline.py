@@ -8,6 +8,7 @@ from .adapters import AdapterContext, get_adapter
 from .config import Settings
 from .downloader import Downloader, NotADocument
 from .lifecycle import LifecycleChecker
+from .mpn import FORM_FULL, MpnCheck, inspect_mpn, packaging_trims, wildcard_prefix
 from .http_client import DomainNotAllowed, FetchError, LoginRequired, PoliteSession, RobotsDisallowed, host_allowed
 from .models import (BomItem, Candidate, DocType, ItemResult, LifecycleInfo, LongevityInfo, Scope, SearchResult,
                      Status)
@@ -63,8 +64,11 @@ class Pipeline:
 
         ctx = AdapterContext(self.session, self.settings, item.manufacturer)
         adapter = get_adapter(item.manufacturer.adapter)
+        self._inspect_mpn(item, adapter, ctx, res)
         search = adapter.search(item.mpn, ctx)
         self._download_candidates(item, search, res)
+        if not self._has_specific(res):
+            self._fallback_trimmed(item, adapter, ctx, search, res)
 
         res.manual_urls = list(dict.fromkeys(search.manual_urls))
         res.notes.extend(search.notes)
@@ -73,6 +77,47 @@ class Pipeline:
         res.reasons = self._reasons(res, search)
         self._lifecycle_and_longevity(item, adapter, res)
         return res
+
+    def _inspect_mpn(self, item: BomItem, adapter, ctx: AdapterContext, res: ItemResult) -> None:
+        """Skrót / wzorzec / pełny numer – sprawdzenie na stronie producenta i ewentualne rozwinięcie."""
+        if item.wildcard:
+            item.mpn = wildcard_prefix(item.mpn_bom or item.mpn) or item.mpn
+        if not self.settings.inspect_mpn:
+            return
+        try:
+            check = inspect_mpn(item, adapter, ctx, self.settings.expand_abbreviated_mpn)
+        except Exception as exc:  # analiza MPN nie może zatrzymać przebiegu
+            log.exception("Analiza MPN: błąd dla %s", item.mpn)
+            check = MpnCheck(notes=[f"błąd analizy MPN: {exc}"])
+        item.mpn_check = check
+        if check.expanded_to:
+            item.mpn = check.expanded_to
+        if item.hints and not check.expanded_to and check.form != FORM_FULL:
+            res.notes.append("W innych kolumnach BoM (np. opis) występuje dłuższy numer: " + ", ".join(item.hints)
+                             + " – możliwe, że to pełny MPN")
+
+    def _has_specific(self, res: ItemResult) -> bool:
+        return any(d.scope != Scope.GENERAL and d.doc_types & {DocType.ROHS, DocType.REACH} for d in res.docs)
+
+    def _fallback_trimmed(self, item: BomItem, adapter, ctx: AdapterContext, search: SearchResult,
+                          res: ItemResult) -> None:
+        """Gdy pełny numer (z sufiksem opakowania) nic nie dał – szukaj formy bez sufiksu.
+        Znalezione dokumenty są oznaczane jako zbiorcze, bo nie zawierają pełnego MPN."""
+        known = {c.url for c in search.candidates}
+        for trimmed, why in packaging_trims(item.mpn):
+            extra = adapter.search(trimmed, ctx)
+            new = [c for c in extra.candidates if c.scope != Scope.GENERAL and c.url not in known]
+            known |= {c.url for c in extra.candidates}
+            if not new:
+                continue
+            res.notes.append(f"Brak dokumentów dla pełnego MPN – szukano także formy {trimmed} ({why})")
+            extra.candidates = new
+            self._download_candidates(item, extra, res)
+            search.login_required += extra.login_required
+            search.form_required += extra.form_required
+            search.notes += extra.notes
+            if self._has_specific(res):
+                return
 
     def _lifecycle_and_longevity(self, item: BomItem, adapter, res: ItemResult) -> None:
         if self.settings.check_lifecycle:

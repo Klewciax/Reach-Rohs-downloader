@@ -89,6 +89,23 @@ def test_example_bom_full_run_all_options_offline(tmp_path):
 
 
 @responses.activate
+def test_multisheet_excel_bom_full_run_offline(tmp_path):
+    """Pełny przebieg na wielokartowym BoM z Excela (pusta okładka, lista na 2. karcie, skróty MPN)."""
+    responses.get(re.compile(r"https?://.*"), status=404)
+    cfg = tmp_path / "cfg.yaml"
+    cfg.write_text("min_delay_per_host: 0\ndelay_jitter: 0\nbackoff_base: 0\nmax_retries: 0\n")
+    out = tmp_path / "out"
+    assert main([str(ROOT / "examples" / "bom_example_multisheet.xlsx"), "-o", str(out), "-c", str(cfg)]) == 0
+    import csv
+    rows = {r["MPN"]: r for r in csv.DictReader(open(out / "report_items.csv", encoding="utf-8-sig"), delimiter=";")}
+    assert rows["LM358DT"]["Zamiennik (2. źródło)"] == "TAK"
+    assert rows["CRCW0603xxxxFKEA"]["Forma MPN"] == "wzorzec rodziny"
+    assert "LM358DR" in rows["LM358"]["Uwagi do MPN"]
+    summary = [r for r in load_workbook(out / "report.xlsx")["Podsumowanie"].iter_rows(values_only=True)]
+    assert any(r[0] == "Analiza arkusza" and "WYBRANY" in str(r[1]) for r in summary)
+
+
+@responses.activate
 def test_live_smoke_logic_flags_dead_urls(tmp_path):
     """Logika trybu --live (na mockach): martwy URL = BROKEN, kod wyjścia 1."""
     reg = tmp_path / "m.yaml"

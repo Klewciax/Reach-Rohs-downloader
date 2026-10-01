@@ -30,6 +30,7 @@ from .manufacturers import ManufacturerRegistry
 from .models import BomItem
 
 EXAMPLE_BOM = PACKAGE_ROOT / "examples" / "bom_example.csv"
+EXAMPLE_XLSX = PACKAGE_ROOT / "examples" / "bom_example_multisheet.xlsx"
 SMOKE_PARTS = PACKAGE_ROOT / "config" / "smoke_parts.yaml"
 _TEMPLATE_FIELDS = {"mpn", "mpn_lower", "base", "base_lower"}
 
@@ -94,12 +95,22 @@ def offline_checks(manufacturers_file: str | Path = DEFAULT_MANUFACTURERS) -> li
 
     # Przykładowy BoM: parsowanie + deduplikacja
     try:
-        rows, invalid, meta = read_bom(EXAMPLE_BOM)
+        rows, invalid, meta = read_bom(EXAMPLE_BOM, registry=reg)
         items = group_items(rows, reg)
         checks.append(Check(OK, "bom", f"przykładowy BoM: {len(rows)} wierszy, {len(invalid)} niepoprawnych, "
                                       f"{len(items)} pozycji"))
     except Exception as exc:
         checks.append(Check(BROKEN, "bom", f"przykładowy BoM: {exc}"))
+    # BoM wielokartowy (pusta okładka, lista na 2. karcie, polskie nagłówki, zamienniki, skróty MPN)
+    if EXAMPLE_XLSX.is_file():
+        try:
+            rows, invalid, meta = read_bom(EXAMPLE_XLSX, registry=reg)
+            ok = meta["sheet"] == "BOM" and meta.get("alternates", 0) > 0
+            checks.append(Check(OK if ok else BROKEN, "bom",
+                                f"BoM wielokartowy: wybrano arkusz '{meta['sheet']}', {len(rows)} wierszy "
+                                f"(zamienników: {meta.get('alternates', 0)})"))
+        except Exception as exc:
+            checks.append(Check(BROKEN, "bom", f"BoM wielokartowy: {exc}"))
     return checks
 
 

@@ -67,12 +67,68 @@ def mpn_prefixes(mpn: str, min_len: int = 4) -> list[str]:
     return out
 
 
+def _mpn_regex(mpn: str) -> re.Pattern | None:
+    chars = [re.escape(c) for c in compact(mpn)]
+    if not chars:
+        return None
+    # Separatory (- / . , # spacja) między znakami traktowane elastycznie: "LM358-DR" == "LM358DR".
+    return re.compile(r"(?<![A-Za-z0-9])" + r"[-/.,# ]?".join(chars), re.I)
+
+
+_TOKEN_TAIL = re.compile(r"[-/#+,.]?[A-Za-z0-9][A-Za-z0-9\-/#+,.]*")
+
+
+def is_exact_end(text: str, end: int) -> bool:
+    """Czy dopasowanie MPN kończy się na granicy numeru.
+
+    "LM358DR " / "LM358DR," / "LM358DR." -> koniec numeru;
+    "LM358DRG4", "ATMEGA328P-AU", "BAS16,215", "LTC3780EG#PBF" -> dłuższy numer (inny wariant).
+    """
+    nxt = text[end:end + 1]
+    if not nxt:
+        return True
+    if nxt.isalnum():
+        return False
+    if nxt in "-/#+,." and text[end + 1:end + 2].isalnum():
+        return False
+    return True
+
+
+def find_mpn_tokens(text: str, mpn: str) -> tuple[bool, list[str]]:
+    """Szuka MPN w tekście z poszanowaniem granic tokenu.
+
+    Zwraca (exact, longer): exact=True, jeśli MPN występuje jako samodzielny numer;
+    longer = dłuższe numery zaczynające się od MPN (np. warianty zamówieniowe LM358 -> LM358DR).
+    """
+    rx = _mpn_regex(mpn)
+    if rx is None:
+        return False, []
+    exact, longer = False, []
+    for m in rx.finditer(text):
+        if is_exact_end(text, m.end()):
+            exact = True
+            continue
+        tail = _TOKEN_TAIL.match(text, m.end())
+        token = (m.group(0) + (tail.group(0) if tail else "")).rstrip("-/#+,.")
+        if len(token) <= len(m.group(0)) + 15 and token.upper() not in (t.upper() for t in longer):
+            longer.append(token)
+    return exact, longer
+
+
 def scope_from_text(mpn: str, text: str) -> tuple[Scope, str]:
-    """Określa zakres dokumentu na podstawie obecności MPN w treści."""
-    hay = compact(text)
-    full = compact(mpn)
-    if full and full in hay:
+    """Określa zakres dokumentu na podstawie obecności MPN w treści.
+
+    PART tylko wtedy, gdy MPN występuje jako samodzielny numer. Gdy w treści są wyłącznie
+    dłuższe numery (np. BoM: "LM358", dokument: "LM358DRG4"), dokument dotyczy innego
+    wariantu i jest oznaczany jako zbiorczy (FAMILY).
+    """
+    exact, longer = find_mpn_tokens(text, mpn)
+    if exact:
         return Scope.PART, f"MPN {mpn} znaleziony w treści"
+    if longer:
+        return Scope.FAMILY, ("w treści występują tylko dłuższe numery (inne warianty): "
+                              + ", ".join(longer[:5]))
+    hay = compact(text)
     for p in mpn_prefixes(mpn):
         if p in hay:
             return Scope.FAMILY, f"w treści znaleziono tylko prefiks rodziny '{p}'"

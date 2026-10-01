@@ -17,7 +17,7 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 
 from .adapters import AdapterContext, BaseAdapter
-from .classify import compact, mpn_prefixes
+from .classify import _mpn_regex, compact, is_exact_end, mpn_prefixes
 from .downloader import Downloader, NotADocument, safe_name
 from .http_client import FetchError
 from .models import BomItem, Candidate, DocType, LifecycleInfo, LifecycleStatus, LongevityInfo, Scope, SearchResult
@@ -74,12 +74,11 @@ def classify_status(label: str) -> LifecycleStatus:
 
 
 def _mpn_positions(text: str, mpn: str) -> list[int]:
-    """Pozycje wystąpień MPN w tekście (separatory - / . , # spacja traktowane elastycznie)."""
-    chars = [re.escape(c) for c in compact(mpn)]
-    if not chars:
+    """Pozycje samodzielnych wystąpień MPN (separatory - / . , # spacja traktowane elastycznie)."""
+    rx = _mpn_regex(mpn)
+    if rx is None:
         return []
-    rx = re.compile(r"(?<![A-Za-z0-9])" + r"[-/.,# ]?".join(chars) + r"(?![A-Za-z0-9])", re.I)
-    return [m.start() for m in rx.finditer(text)]
+    return [m.start() for m in rx.finditer(text) if is_exact_end(text, m.end())]
 
 
 def parse_lifecycle(text: str, mpn: str) -> tuple[LifecycleStatus, str, str, str]:

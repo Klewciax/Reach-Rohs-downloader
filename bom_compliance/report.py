@@ -50,7 +50,8 @@ LONGEVITY_COLUMNS = [
 
 ITEM_COLUMNS = [
     "MPN", "Manufacturer (BoM)", "Manufacturer (znormalizowany)", "Dopasowanie producenta", "Ref. designators",
-    "Wiersz(e) w pliku BoM", "Status RoHS", "Status REACH", "Plik RoHS", "URL źródłowy RoHS", "Zakres RoHS",
+    "Wiersz(e) w pliku BoM", "Arkusz", "Zamiennik (2. źródło)", "Komórka MPN (oryginał)", "Forma MPN",
+    "MPN użyty do wyszukiwania", "Numery u producenta zaczynające się od MPN", "Uwagi do MPN", "Status RoHS", "Status REACH", "Plik RoHS", "URL źródłowy RoHS", "Zakres RoHS",
     "Plik REACH", "URL źródłowy REACH", "Zakres REACH", "Data pobrania (UTC)", "MPN potwierdzony w treści",
     "Powód niepowodzenia / uwagi", "Do ręcznego sprawdzenia (oficjalne strony)",
 ]
@@ -75,6 +76,13 @@ class Summary:
 
 def summarize(results: list[ItemResult], settings: Settings, meta: dict, invalid: list[InvalidRow]) -> Summary:
     s = _summarize(results, settings, meta, invalid)
+    checks = [getattr(r.item.mpn_check, "form", "") for r in results]
+    s.extra["MPN skrócone (nazwa produktu/rodziny)"] = sum(1 for f in checks if f.startswith("skrócony"))
+    s.extra["  w tym rozwinięte automatycznie do pełnego numeru"] = sum(
+        1 for r in results if getattr(r.item.mpn_check, "expanded_to", ""))
+    s.extra["MPN-wzorce rodzin (xxx, *)"] = sum(1 for r in results if r.item.wildcard)
+    s.extra["MPN nieznalezione na stronie producenta"] = sum(1 for f in checks if f.startswith("nie znaleziono"))
+    s.extra["Pozycje będące wyłącznie zamiennikami (2. źródło)"] = sum(1 for r in results if r.item.alternate)
     if settings.check_lifecycle:
         for st in LifecycleStatus:
             n = sum(1 for r in results if r.lifecycle and r.lifecycle.status == st)
@@ -133,6 +141,19 @@ def item_columns(settings: Settings) -> list[str]:
     return cols
 
 
+def mpn_cells(r: ItemResult) -> list[str]:
+    it = r.item
+    chk = it.mpn_check
+    form = getattr(chk, "form", "") or ("wzorzec rodziny" if it.wildcard else "nie sprawdzono")
+    notes = list(it.mpn_notes) + list(getattr(chk, "notes", []) or [])
+    if getattr(chk, "source_url", ""):
+        notes.append(f"źródło: {chk.source_url}")
+    if it.hints:
+        notes.append("w opisie BoM: " + ", ".join(it.hints))
+    return [", ".join(it.sheets), "TAK" if it.alternate else "", " | ".join(dict.fromkeys(it.mpn_raw)), form,
+            it.mpn, ", ".join(getattr(chk, "variants", []) or []), "\n".join(dict.fromkeys(notes))]
+
+
 def item_rows(results: list[ItemResult], settings: Settings | None = None) -> list[list[str]]:
     rows = []
     for r in results:
@@ -145,9 +166,9 @@ def item_rows(results: list[ItemResult], settings: Settings | None = None) -> li
             if d.note:
                 reasons.append(f"{Path(d.path).name}: {d.note}")
         rows.append([
-            r.item.mpn, " | ".join(r.item.manufacturer_variants) or r.item.manufacturer_raw,
+            r.item.mpn_bom or r.item.mpn, " | ".join(r.item.manufacturer_variants) or r.item.manufacturer_raw,
             r.item.manufacturer.name if r.item.manufacturer else "", r.item.match_method,
-            ", ".join(r.item.refdes), ", ".join(map(str, r.item.rows)),
+            ", ".join(r.item.refdes), ", ".join(map(str, r.item.rows)), *mpn_cells(r),
             STATUS_PL[r.rohs_status], STATUS_PL[r.reach_status], rp, ru, rs, ep, eu, es, dates, verified,
             "\n".join(reasons), "\n".join(r.manual_urls),
         ])
@@ -220,7 +241,13 @@ def build_request_groups(results: list[ItemResult], settings: Settings,
         if g is None:
             g = groups[key] = RequestGroup(name, [], contacts.get(key))
         status = f"RoHS: {STATUS_PL[r.rohs_status]}; REACH: {STATUS_PL[r.reach_status]}"
-        g.items.append((r.item.mpn, miss, status))
+        label = r.item.mpn if r.item.mpn == (r.item.mpn_bom or r.item.mpn) else \
+            f"{r.item.mpn} (BoM: {r.item.mpn_bom})"
+        if getattr(r.item.mpn_check, "form", "").startswith("skrócony") and not r.item.mpn_check.expanded_to:
+            label += " [base part number – please cover all orderable variants]"
+        elif r.item.wildcard:
+            label += " [family pattern – please cover all matching part numbers]"
+        g.items.append((label, miss, status))
     for g in groups.values():
         g.email = email_template(g, settings)
     return list(groups.values())
@@ -408,7 +435,12 @@ def _write_xlsx(path: Path, s: Summary, items, files, file_header, groups, req_r
     ws["A1"].font = Font(bold=True, size=14)
     ws.append(["Wygenerowano (UTC)", datetime.now(timezone.utc).replace(microsecond=0).isoformat(), ""])
     ws.append(["Arkusz / nagłówek BoM", f"{meta.get('sheet')} / wiersz {meta.get('header_row')}", ""])
-    ws.append(["Mapowanie kolumn", ", ".join(f"{k}={v}" for k, v in (meta.get('columns') or {}).items()), ""])
+    ws.append(["Mapowanie kolumn", ", ".join(f"{k}={v}" for k, v in (meta.get('columns') or {}).items())
+               + (f" (wykryte na podstawie {meta.get('detection')})" if meta.get("detection") else ""), ""])
+    for line in meta.get("sheets", []):
+        ws.append(["Analiza arkusza", line, ""])
+    for w in meta.get("warnings", []):
+        ws.append(["UWAGA (BoM)", w, ""])
     ws.append([])
     ws.append(["Miara", "Liczba", "Procent pozycji"])
     for c in ws[ws.max_row]:
@@ -425,8 +457,12 @@ def _write_xlsx(path: Path, s: Summary, items, files, file_header, groups, req_r
     ws.column_dimensions["B"].width = 60
     ws.column_dimensions["C"].width = 16
 
-    widths = {1: 22, 2: 26, 3: 22, 9: 50, 10: 60, 12: 50, 13: 60, 17: 70, 18: 60}
-    sheet(wb.create_sheet("Pozycje"), item_header, items, widths, status_cols=(7, 8))
+    widths = {item_header.index(k) + 1: w for k, w in (
+        ("Plik RoHS", 50), ("URL źródłowy RoHS", 60), ("Plik REACH", 50), ("URL źródłowy REACH", 60),
+        ("Powód niepowodzenia / uwagi", 70), ("Do ręcznego sprawdzenia (oficjalne strony)", 60),
+        ("Uwagi do MPN", 60), ("Numery u producenta zaczynające się od MPN", 40), ("Forma MPN", 30))}
+    sheet(wb.create_sheet("Pozycje"), item_header, items, widths,
+          status_cols=(item_header.index("Status RoHS") + 1, item_header.index("Status REACH") + 1))
     if lc_rows:
         lc_header = lifecycle_header(settings)
         ws_lc = wb.create_sheet("Cykl życia i longevity")

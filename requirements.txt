@@ -3,3 +3,4 @@ beautifulsoup4>=4.12
 openpyxl>=3.1
 PyYAML>=6.0
 pypdf>=4.0
+xlrd>=2.0  # odczyt starych plików .xls

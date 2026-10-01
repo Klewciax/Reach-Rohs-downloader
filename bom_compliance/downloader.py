@@ -115,6 +115,13 @@ class Downloader:
             types, scope, mpn_verified = set(cand.doc_types), cand.scope, "unknown"
             notes.append("nie udało się odczytać tekstu (skan / format) – rodzaj i zakres wg źródła, do ręcznej weryfikacji")
 
+        check = item.mpn_check
+        abbreviated = check is not None and getattr(check, "form", "").startswith("skrócony") \
+            and not getattr(check, "expanded_to", "")
+        if scope == Scope.PART and (item.wildcard or abbreviated):
+            scope, mpn_verified = Scope.FAMILY, "no"
+            notes.append("MPN w BoM jest skrótem/wzorcem – dokument nie potwierdza konkretnego wariantu zamówieniowego")
+
         path = self._save(fetched, item, types, scope)
         return DownloadedDoc(
             url=cand.url, final_url=fetched.final_url, path=str(path), sha256=fetched.sha256,
