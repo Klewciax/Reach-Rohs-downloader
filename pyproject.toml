@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bom-compliance"
+version = "1.0.0"
+description = "Pobieranie deklaracji RoHS/REACH z oficjalnych stron producentów na podstawie BoM"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.31",
+    "beautifulsoup4>=4.12",
+    "openpyxl>=3.1",
+    "PyYAML>=6.0",
+    "pypdf>=4.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "responses>=0.25"]
+
+[project.scripts]
+bom-compliance = "bom_compliance.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["bom_compliance*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

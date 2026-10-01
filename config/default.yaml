@@ -1,0 +1,40 @@
+# Domyślna konfiguracja bom-compliance. Skopiuj i zmodyfikuj, a następnie podaj przez --config.
+output_dir: output
+
+# Mapowanie kolumn BoM. Puste wartości = autodetekcja po typowych nazwach.
+# Logiczne nazwy: mpn, manufacturer, refdes, quantity
+columns: {}
+#  mpn: "Mfr. Part #"
+#  manufacturer: "Mfr."
+#  refdes: "Designator"
+
+sheet: null  # nazwa arkusza XLSX (null = pierwszy arkusz z rozpoznanym nagłówkiem)
+
+# --- HTTP / uprzejmość wobec serwerów ---
+connect_timeout: 10
+read_timeout: 30
+min_delay_per_host: 2.0   # s; jeśli robots.txt podaje Crawl-delay, używana jest większa wartość
+delay_jitter: 0.5
+max_retries: 4            # dla 429/5xx/błędów sieci; backoff wykładniczy + Retry-After
+backoff_base: 2.0
+backoff_max: 60
+max_redirects: 5
+max_download_mb: 50
+respect_robots: true
+
+# --- Logika wyszukiwania ---
+fuzzy_manufacturer_match: true
+fuzzy_cutoff: 0.88
+download_general_statements: true   # pobieraj ogólne oświadczenia producenta jako materiał pomocniczy
+count_general_as_success: false     # ogólne oświadczenie NIE jest traktowane jako deklaracja dla MPN
+count_family_as_success: true       # dokument zbiorczy dla rodziny jest liczony (i oznaczany w raporcie)
+generic_max_pages: 8
+generic_max_depth: 2
+max_docs_per_item: 6
+pdf_text_pages: 6
+
+# --- Dane do szablonu e-maila ---
+requester_name: "[Your Name]"
+requester_company: "[Your Company]"
+requester_email: "[your.email@company.com]"
+project_name: "[Product / Project name]"

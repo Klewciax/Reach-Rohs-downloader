@@ -1,0 +1,352 @@
+# Rejestr producentów.
+#
+# Pola:
+#   name               – nazwa wyświetlana w raporcie
+#   adapter            – nazwa adaptera (bom_compliance/adapters); "generic" = mechanizm awaryjny
+#   domains            – OFICJALNE domeny producenta; pobieranie spoza nich jest zablokowane
+#                        (dotyczy też przekierowań). Subdomeny są dozwolone automatycznie.
+#   aliases            – warianty nazw spotykane w BoM (normalizacja usuwa wielkość liter,
+#                        interpunkcję i formy prawne typu Inc./Ltd./GmbH)
+#   compliance_pages   – strony producenta o RoHS/REACH (punkt startowy dla mechanizmu
+#                        generycznego i lista "do ręcznego sprawdzenia" w raporcie)
+#   contact_pages      – strony kontaktowe / formularze (raport "Do uzyskania mailowo")
+#   search_urls        – opcjonalne szablony wyszukiwarki na stronie producenta, {mpn} = MPN
+#   general_documents  – ogólne oświadczenia producenta (scope: general / family)
+#
+# ZASADA: wpisujemy wyłącznie URL-e znalezione na oficjalnej domenie producenta.
+# Wszystkie URL-e z tego pliku są przy każdym uruchomieniu weryfikowane (HTTP 200,
+# typ treści, domena); nieosiągalne są oznaczane w raporcie jako "do ręcznej weryfikacji".
+# URL-e poniżej zostały zebrane 2026-10-01 z indeksu wyszukiwarki ograniczonego do
+# oficjalnych domen producentów.
+
+manufacturers:
+  texas_instruments:
+    name: Texas Instruments
+    adapter: ti
+    domains: [ti.com]
+    aliases:
+      - TI
+      - Texas Instruments
+      - Texas Instruments Inc
+      - Texas Instruments Incorporated
+      - Texas Instr
+      - TEXAS INSTRUMENTS (TI)
+      - Burr-Brown
+      - Burr Brown
+      - National Semiconductor
+      - National Semi
+    compliance_pages:
+      - https://www.ti.com/quality-reliability/environmental-information.html
+      - https://www.ti.com/support-quality/faqs/environmental-information-faqs.html
+    contact_pages:
+      - https://www.ti.com/materialcontent/home
+      - https://www.ti.com/support.html
+    general_documents:
+      - url: https://www.ti.com/lit/pdf/szzq087
+        types: [REACH]
+        scope: general
+        title: "Statement on REACH Articles Provisions (TI)"
+      - url: https://www.ti.com/lit/pdf/szzq088
+        types: [RoHS]
+        scope: general
+        title: "TI RoHS and Product Statement Designation"
+
+  analog_devices:
+    name: Analog Devices
+    adapter: adi
+    domains: [analog.com]
+    aliases:
+      - ADI
+      - Analog Devices
+      - Analog Devices Inc
+      - Analog Devices Incorporated
+      - Linear Technology
+      - Linear Technology Corporation
+      - Linear Tech
+      - LTC
+      - Maxim Integrated
+      - Maxim Integrated Products
+      - Maxim
+      - Hittite
+      - Hittite Microwave
+    compliance_pages:
+      - https://www.analog.com/en/support/quality-and-reliability/product-stewardship.html
+      - https://quality.analog.com/searchresults.aspx
+    contact_pages:
+      - https://www.analog.com/en/support/quality-and-reliability/product-stewardship.html
+    general_documents:
+      - url: https://www.analog.com/media/en/quality/REACH-Position-Statement.pdf
+        types: [REACH]
+        scope: general
+        title: "Analog Devices REACH Statement"
+      - url: https://www.analog.com/media/en/quality/ADI-RoHS-Position-Statement.pdf
+        types: [RoHS]
+        scope: general
+        title: "Analog Devices RoHS Position Statement"
+
+  stmicroelectronics:
+    name: STMicroelectronics
+    adapter: st
+    domains: [st.com]
+    aliases:
+      - ST
+      - STM
+      - STMicro
+      - ST Micro
+      - ST Microelectronics
+      - STMicroelectronics
+      - STMicroelectronics NV
+      - STMicroelectronics International
+      - SGS-Thomson
+    compliance_pages:
+      - https://www.st.com/content/st_com/en/about/quality-and-reliability/product-environmental-compliance.html
+      - https://www.st.com/content/st_com/en/about/quality-and-reliability/product-environmental-compliance/material-declaration.html
+    contact_pages:
+      # Formularz Online Support; kategoria zgłoszenia "Environment, Health & Safety"
+      - https://my.st.com/ols
+
+  microchip:
+    name: Microchip Technology
+    adapter: microchip
+    domains: [microchip.com]
+    aliases:
+      - Microchip
+      - Microchip Technology
+      - Microchip Technology Inc
+      - Microchip Technology Incorporated
+      - MCHP
+      - Atmel
+      - Atmel Corporation
+      - Microsemi
+      - Microsemi Corporation
+      - Micrel
+      - Supertex
+      - SMSC
+      - Standard Microsystems
+      - Silicon Storage Technology
+      - SST
+    compliance_pages:
+      - https://www.microchip.com/en-us/about/corporate-responsibility/our-products
+    contact_pages:
+      - https://www.microchip.com/en-us/about/corporate-responsibility/our-products
+    general_documents:
+      - url: https://ww1.microchip.com/downloads/aemDocuments/documents/corporate-responsibilty/environmental/product-regulatory-information/Microchip_REACH_Statement.pdf
+        types: [REACH]
+        scope: general
+        title: "Microchip EU REACH Statement"
+      - url: https://ww1.microchip.com/downloads/aemDocuments/documents/corporate-responsibilty/environmental/product-regulatory-information/Semiconductor_EnvCoC.pdf
+        types: [RoHS]
+        scope: general
+        title: "Microchip IC & Module RoHS Certificate of Compliance"
+
+  onsemi:
+    name: onsemi
+    adapter: onsemi
+    domains: [onsemi.com]
+    aliases:
+      - onsemi
+      - ON Semi
+      - ON Semiconductor
+      - ON Semiconductor Corporation
+      - ON Semiconductor Corp
+      - Semiconductor Components Industries
+      - Fairchild
+      - Fairchild Semiconductor
+      - Fairchild Semiconductor International
+    compliance_pages:
+      - https://www.onsemi.com/company/about-onsemi/quality-and-reliability/product-material-compliance
+    contact_pages:
+      - https://www.onsemi.com/company/about-onsemi/quality-and-reliability/product-material-compliance
+    general_documents:
+      - url: https://www.onsemi.com/site/pdf/REACH_statement.pdf
+        types: [REACH]
+        scope: general
+        title: "onsemi Compliance with REACH"
+
+  nexperia:
+    name: Nexperia
+    adapter: nexperia
+    domains: [nexperia.com]
+    aliases:
+      - Nexperia
+      - Nexperia BV
+      - Nexperia USA
+      - Nexperia B.V.
+    compliance_pages:
+      - https://www.nexperia.com/quality/environmental-indicators
+      - https://www.nexperia.com/about/corporate-social-responsibility/environment
+    contact_pages:
+      - https://www.nexperia.com/quality/environmental-indicators
+
+  nxp:
+    name: NXP Semiconductors
+    adapter: nxp
+    domains: [nxp.com]
+    aliases:
+      - NXP
+      - NXP Semiconductors
+      - NXP Semiconductors NV
+      - NXP USA
+      - Freescale
+      - Freescale Semiconductor
+      - Philips Semiconductors
+    compliance_pages:
+      - https://www.nxp.com/company/about-nxp/sustainability/environmental-product-compliance:ECO-PRODUCTS
+      - https://www.nxp.com/company/about-nxp/sustainability/environmental-product-compliance/environmental-faqs:ENVIRON_FAQ
+    contact_pages:
+      - https://www.nxp.com/company/about-nxp/sustainability/environmental-product-compliance:ECO-PRODUCTS
+    general_documents:
+      - url: https://www.nxp.com/docs/en/supporting-information/NXP-REACH-STATEMENT.pdf
+        types: [REACH]
+        scope: general
+        title: "NXP Statement on EU REACH Provisions"
+
+  infineon:
+    name: Infineon Technologies
+    adapter: infineon
+    domains: [infineon.com]
+    aliases:
+      - Infineon
+      - Infineon Technologies
+      - Infineon Technologies AG
+      - IFX
+      - International Rectifier
+      - IR
+      - Cypress
+      - Cypress Semiconductor
+      - Cypress Semiconductor Corp
+    compliance_pages: []
+    contact_pages: []
+
+  # --- Producenci obsługiwani przez mechanizm generyczny (crawl stron compliance) ---
+  vishay:
+    name: Vishay
+    adapter: generic
+    domains: [vishay.com]
+    aliases:
+      - Vishay
+      - Vishay Intertechnology
+      - Vishay Intertechnology Inc
+      - Vishay Dale
+      - Vishay Siliconix
+      - Vishay Semiconductors
+      - Vishay General Semiconductor
+      - Vishay BCcomponents
+      - Vishay Sprague
+      - Vishay Beyschlag
+      - Vishay Draloric
+    compliance_pages:
+      - https://www.vishay.com/en/how/leadfree/
+      - https://www.vishay.com/en/quality/
+    contact_pages:
+      - https://www.vishay.com/en/quality/
+
+  murata:
+    name: Murata Manufacturing
+    adapter: generic
+    domains: [murata.com]
+    aliases:
+      - Murata
+      - Murata Manufacturing
+      - Murata Manufacturing Co
+      - Murata Electronics
+      - Murata Electronics North America
+      - pSemi
+    compliance_pages:
+      - https://www.murata.com/en-us/support/compliance/rohs
+    contact_pages:
+      - https://www.murata.com/en-us/contactform
+
+  wurth:
+    name: Würth Elektronik
+    adapter: generic
+    domains: [we-online.com]
+    aliases:
+      - Würth Elektronik
+      - Wurth Elektronik
+      - Wuerth Elektronik
+      - Würth
+      - Wurth
+      - Wurth Electronics
+      - Würth Elektronik eiSos
+      - WE
+    compliance_pages:
+      - https://www.we-online.com/en/company/quality
+    contact_pages:
+      - https://www.we-online.com/en/company/quality
+
+  yageo:
+    name: YAGEO
+    adapter: generic
+    domains: [yageo.com]
+    aliases:
+      - Yageo
+      - Yageo Corporation
+      - Phycomp
+    compliance_pages:
+      - https://www.yageo.com/jp/Download/Index/certificates
+    contact_pages: []
+
+  kemet:
+    name: KEMET
+    adapter: generic
+    domains: [kemet.com]
+    aliases:
+      - KEMET
+      - Kemet Electronics
+      - Kemet Electronics Corporation
+    compliance_pages:
+      - https://support.kemet.com/knowledge/how-do-i-find-rohs-and-reach-documentation
+    contact_pages: []
+
+  tdk:
+    name: TDK
+    adapter: generic
+    domains: [tdk.com]
+    aliases:
+      - TDK
+      - TDK Corporation
+      - TDK Electronics
+      - EPCOS
+      - TDK-EPC
+      - TDK EPCOS
+    compliance_pages:
+      - https://product.tdk.com/en/environment/index.html
+    contact_pages: []
+
+  bourns:
+    name: Bourns
+    adapter: generic
+    domains: [bourns.com]
+    aliases:
+      - Bourns
+      - Bourns Inc
+      - Bourns Electronics
+    compliance_pages:
+      - https://bourns.com/resources/rohs
+      - https://bourns.com/rohs-search
+    contact_pages:
+      - https://bourns.com/support/about-us/compliance-ethics-and-registrations
+    general_documents:
+      - url: https://www.bourns.com/docs/rohs-content/bourns-reach-letter.pdf
+        types: [REACH]
+        scope: general
+        title: "Bourns REACH Efforts"
+
+  renesas:
+    name: Renesas Electronics
+    adapter: generic
+    domains: [renesas.com]
+    aliases:
+      - Renesas
+      - Renesas Electronics
+      - Renesas Electronics Corporation
+      - Renesas Electronics America
+      - Intersil
+      - IDT
+      - Integrated Device Technology
+      - Dialog Semiconductor
+    compliance_pages:
+      - https://www.renesas.com/en/support/environmental/environmental-compliance
+      - https://www.renesas.com/en/support/environmental/environmental-compliance/how-find-rohs-compliance-certificate-part-name
+    contact_pages: []

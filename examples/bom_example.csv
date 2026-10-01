@@ -1,0 +1,18 @@
+Item;Designator;Qty;Description;Mfr.;Mfr. Part #
+1;U1;1;Op-amp dual;Texas Instruments Inc.;LM358DR
+2;U2;1;MCU;STMicroelectronics;STM32F103C8T6
+3;U3;1;LDO;TI;TLV70033DDCR
+4;Q1,Q2;2;N-MOSFET;ON Semiconductor;NDS331N
+5;Q3;1;N-MOSFET;onsemi;NDS331N
+6;D1 D2;2;Switching diode;Nexperia;BAS16,215
+7;U4;1;Buck controller;Linear Technology;LTC3780EG#PBF
+8;U5;1;MCU 8-bit;Microchip Technology Inc.;ATMEGA328P-AU
+9;U6;1;CAN transceiver;NXP Semiconductors;TJA1051T/3
+10;Q4;1;Power MOSFET;Infineon Technologies AG;BSC014N04LS
+11;R1-R10;10;Resistor 10k;Vishay Dale;CRCW060310K0FKEA
+12;C1;1;MLCC 100n;Murata;GRM188R71H104KA93D
+13;L1;1;Inductor;Würth Elektronik;7443556082
+14;J1;1;Connector;Acme Connectors Ltd;AC-1234
+15;R11;1;Resistor;;RC0603FR-0710KL
+16;TP1;1;Test point;Generic;N/A
+17;;;;;
