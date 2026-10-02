@@ -20,7 +20,11 @@ backoff_base: 2.0
 backoff_max: 60
 max_redirects: 5
 max_download_mb: 50
-respect_robots: true
+respect_robots: true               # jawne zakazy Disallow w robots.txt są respektowane
+robots_unreachable_policy: allow   # robots.txt nieosiągalny (timeout/5xx) -> "allow" (domyślnie) albo "disallow"
+robots_timeout: 8                  # s; krótki timeout dla robots.txt
+skip_dead_hosts: true              # host bez odpowiedzi jest pomijany do końca przebiegu (bez kolejnych timeoutów)
+# user_agent: "..."                # domyślnie przeglądarkowy – część serwisów blokuje inne
 
 # --- Logika wyszukiwania ---
 fuzzy_manufacturer_match: true

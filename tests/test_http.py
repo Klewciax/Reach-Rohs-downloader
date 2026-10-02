@@ -69,10 +69,46 @@ def test_retry_exhausted(settings):
 
 
 @responses.activate
-def test_robots_unreachable_blocks(settings):
-    # RFC 9309: robots.txt nieosiągalny (5xx) -> nic nie pobieramy z tego hosta
+def test_robots_unreachable_does_not_block_by_default(settings):
+    # robots.txt nie odpowiada (5xx) -> to nie jest zakaz; dokument jest pobierany
+    responses.get("https://www.example-mfr.com/robots.txt", status=503)
+    responses.get("https://www.example-mfr.com/doc.pdf", body=b"%PDF-1.4 ok")
+    s = PoliteSession(settings, sleep=lambda _: None)
+    assert s.get("https://www.example-mfr.com/doc.pdf", D).content.startswith(b"%PDF")
+    robots_calls = [c for c in responses.calls if c.request.url.endswith("robots.txt")]
+    assert len(robots_calls) == 1  # robots.txt bez ponowień
+
+
+@responses.activate
+def test_robots_unreachable_strict_policy(settings):
+    settings.robots_unreachable_policy = "disallow"
     responses.get("https://www.example-mfr.com/robots.txt", status=503)
     s = PoliteSession(settings, sleep=lambda _: None)
-    with pytest.raises(FetchError, match="robots.txt"):
+    with pytest.raises(RobotsDisallowed):
         s.get("https://www.example-mfr.com/doc.pdf", D)
-    assert not any(c.request.url.endswith("doc.pdf") for c in responses.calls)
+
+
+@responses.activate
+def test_html_instead_of_robots_means_no_rules(settings):
+    responses.get("https://www.example-mfr.com/robots.txt", body="<html>Disallow: / </html>",
+                  content_type="text/html")
+    responses.get("https://www.example-mfr.com/doc.pdf", body=b"%PDF-1.4 ok")
+    s = PoliteSession(settings, sleep=lambda _: None)
+    assert s.get("https://www.example-mfr.com/doc.pdf", D).status_code == 200
+
+
+def test_dead_host_is_skipped_after_network_failure(settings):
+    import requests as rq
+    calls = []
+    s = PoliteSession(settings, sleep=lambda _: None)
+
+    def boom(*a, **k):
+        calls.append(a[1])
+        raise rq.ConnectTimeout("timeout")
+    s._session.request = boom
+    with pytest.raises(FetchError):
+        s.get("https://www.slow-mfr.com/a.html", ["slow-mfr.com"])
+    n = len(calls)
+    with pytest.raises(FetchError, match="nie odpowiadał"):
+        s.get("https://www.slow-mfr.com/b.html", ["slow-mfr.com"])
+    assert len(calls) == n  # brak kolejnych prób połączenia z martwym hostem

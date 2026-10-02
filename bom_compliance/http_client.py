@@ -88,13 +88,13 @@ class PoliteSession:
         self._session.headers.update(
             {
                 "User-Agent": settings.user_agent,
-                "Accept": "text/html,application/pdf,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.8",
+                "Accept": "text/html,application/xhtml+xml,application/pdf,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9,pl;q=0.8",
             }
         )
         self._last_request: dict[str, float] = {}
         self._robots: dict[str, urllib.robotparser.RobotFileParser | None] = {}
-        self._robots_unreachable: set[str] = set()
+        self._dead_hosts: dict[str, str] = {}  # host -> powód (nie odpowiada; pomijany w tym przebiegu)
         # Cache stron HTML w obrębie jednego przebiegu (wypełniany przez adaptery).
         self.page_cache: dict[str, tuple[str, str, str]] = {}
 
@@ -127,26 +127,29 @@ class PoliteSession:
             return self._robots[host]
         robots_url = f"{parts.scheme}://{parts.netloc}/robots.txt"
         rp = urllib.robotparser.RobotFileParser(robots_url)
+        quick = (min(self.settings.connect_timeout, 5.0), self.settings.robots_timeout)
+        allow_on_error = self.settings.robots_unreachable_policy.lower() != "disallow"
         try:
-            resp = self._raw_get(robots_url, host)
+            resp = self._raw_request("GET", robots_url, host, timeout=quick, retries=0)
             for _ in range(5):  # RFC 9309: śledź do 5 przekierowań
                 if resp.status_code not in (301, 302, 303, 307, 308) or not resp.headers.get("Location"):
                     break
                 nxt = urljoin(robots_url, resp.headers["Location"])
-                resp = self._raw_get(nxt, host_of(nxt))
+                resp = self._raw_request("GET", nxt, host_of(nxt), timeout=quick, retries=0)
         except FetchError as exc:
-            # RFC 9309: robots.txt nieosiągalny -> zakładamy pełny zakaz.
-            log.warning("robots.txt niedostępny dla %s: %s", host, exc)
-            rp.disallow_all = True
-            self._robots_unreachable.add(host)
+            # Brak odpowiedzi na robots.txt to nie zakaz – większość serwisów nie ma robots.txt albo
+            # odpowiada wolno. Jawne reguły Disallow są respektowane zawsze, gdy plik da się pobrać.
+            log.info("robots.txt dla %s niedostępny (%s) – %s", host, exc,
+                     "brak ograniczeń" if allow_on_error else "traktuję jako zakaz (robots_unreachable_policy)")
+            rp.allow_all, rp.disallow_all = allow_on_error, not allow_on_error
             self._robots[host] = rp
             return rp
-        if resp.status_code == 200:
+        if resp.status_code == 200 and "html" not in resp.headers.get("Content-Type", "").lower():
             rp.parse(resp.text.splitlines())
-        elif 400 <= resp.status_code < 500:
-            rp.allow_all = True  # RFC 9309: brak robots.txt -> brak ograniczeń
+        elif resp.status_code == 200 or 400 <= resp.status_code < 500:
+            rp.allow_all = True  # brak robots.txt (lub strona HTML zamiast pliku) -> brak ograniczeń
         else:
-            rp.disallow_all = True
+            rp.allow_all, rp.disallow_all = allow_on_error, not allow_on_error
         self._robots[host] = rp
         return rp
 
@@ -160,25 +163,33 @@ class PoliteSession:
     def _raw_get(self, url: str, host: str, stream: bool = False) -> requests.Response:
         return self._raw_request("GET", url, host, stream=stream)
 
-    def _raw_request(self, method: str, url: str, host: str, stream: bool = False, **kwargs) -> requests.Response:
+    def _raw_request(self, method: str, url: str, host: str, stream: bool = False, timeout=None, retries=None,
+                     **kwargs) -> requests.Response:
         """Zapytanie z limitem tempa i retry (bez obsługi przekierowań)."""
         s = self.settings
+        if s.skip_dead_hosts and host in self._dead_hosts:
+            raise FetchError(url, f"Host {host} nie odpowiadał wcześniej w tym przebiegu ({self._dead_hosts[host]}) – pominięto")
+        max_retries = s.max_retries if retries is None else retries
+        timeout = timeout or (s.connect_timeout, s.read_timeout)
         last_error: str = "nieznany błąd"
-        for attempt in range(s.max_retries + 1):
+        network_failure = False
+        for attempt in range(max_retries + 1):
             self._throttle(host)
             try:
                 resp = self._session.request(
                     method,
                     url,
-                    timeout=(s.connect_timeout, s.read_timeout),
+                    timeout=timeout,
                     allow_redirects=False,
                     stream=stream,
                     **kwargs,
                 )
             except (requests.ConnectionError, requests.Timeout) as exc:
                 last_error = f"błąd sieci: {exc.__class__.__name__}"
+                network_failure = True
                 wait = min(s.backoff_max, s.backoff_base * 2 ** attempt)
             else:
+                network_failure = False
                 if resp.status_code not in RETRY_STATUSES:
                     return resp
                 last_error = f"HTTP {resp.status_code}"
@@ -187,11 +198,14 @@ class PoliteSession:
                     wait = s.backoff_base * 2 ** attempt
                 wait = min(s.backoff_max, wait)
                 resp.close()
-            if attempt < s.max_retries:
+            if attempt < max_retries:
                 wait += random.uniform(0, s.delay_jitter)
-                log.info("Ponawiam %s za %.1fs (%s, próba %d/%d)", url, wait, last_error, attempt + 1, s.max_retries)
+                log.info("Ponawiam %s za %.1fs (%s, próba %d/%d)", url, wait, last_error, attempt + 1, max_retries)
                 self._sleep(wait)
-        raise FetchError(url, f"Nie udało się pobrać po {s.max_retries + 1} próbach: {last_error}")
+        if network_failure and s.skip_dead_hosts:
+            self._dead_hosts[host] = last_error
+            log.warning("Host %s nie odpowiada (%s) – pomijam go do końca przebiegu", host, last_error)
+        raise FetchError(url, f"Nie udało się pobrać po {max_retries + 1} próbach: {last_error}")
 
     def get(self, url: str, domains: list[str], stream: bool = False) -> requests.Response:
         """GET ograniczony do domen producenta; ręcznie śledzi przekierowania."""
@@ -204,11 +218,7 @@ class PoliteSession:
             if not host_allowed(current, domains):
                 raise DomainNotAllowed(current, f"Domena spoza listy producenta {domains}")
             if not self.robots_allows(current):
-                host = host_of(current)
-                if host in self._robots_unreachable:
-                    raise FetchError(current, f"Błąd sieci: nie można pobrać robots.txt dla {host} "
-                                              "(zgodnie z RFC 9309 pobieranie wstrzymane)")
-                raise RobotsDisallowed(current, "Zablokowane przez robots.txt")
+                raise RobotsDisallowed(current, "Zablokowane przez robots.txt (jawny zakaz Disallow)")
             resp = self._raw_get(current, host_of(current), stream=stream)
             if resp.is_redirect or resp.status_code in (301, 302, 303, 307, 308):
                 location = resp.headers.get("Location")

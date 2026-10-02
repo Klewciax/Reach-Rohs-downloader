@@ -93,13 +93,15 @@ def name_matches_site(name: str, html: str) -> tuple[bool, str]:
 
 
 class ManufacturerDiscovery:
-    MAX_GUESSES = 10
+    MAX_GUESSES = 6
 
     def __init__(self, session: PoliteSession, hub, cache_file: str | Path | None, enabled: bool = True):
         # Osobna sesja bez ponowień: zgadywane domeny często nie istnieją – nie czekamy na backoff.
         from dataclasses import replace
 
-        self.session = PoliteSession(replace(session.settings, max_retries=0), sleep=session._sleep)
+        self.session = PoliteSession(replace(session.settings, max_retries=0, connect_timeout=5.0,
+                                             read_timeout=10.0, min_delay_per_host=0.5),
+                                     sleep=session._sleep)
         self.hub = hub
         self.enabled = enabled
         self.cache_file = Path(cache_file) if cache_file else None

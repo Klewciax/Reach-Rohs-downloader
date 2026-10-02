@@ -23,9 +23,10 @@ class Settings:
     sheet: str | None = None
 
     # HTTP
-    user_agent: str = (
-        "bom-compliance/1.0 (+RoHS/REACH declaration fetcher; respects robots.txt)"
-    )
+    # Część serwisów (Akamai/Cloudflare) "zawiesza" połączenia od nieprzeglądarkowych klientów,
+    # dlatego domyślnie przedstawiamy się jak przeglądarka. Tempo i robots.txt nadal respektujemy.
+    user_agent: str = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                       "Chrome/124.0 Safari/537.36")
     connect_timeout: float = 10.0
     read_timeout: float = 30.0
     min_delay_per_host: float = 2.0  # sekundy między zapytaniami do tego samego hosta
@@ -35,7 +36,10 @@ class Settings:
     backoff_max: float = 60.0
     max_redirects: int = 5
     max_download_mb: float = 50.0
-    respect_robots: bool = True  # wyłączenie wymaga świadomej decyzji (flaga CLI)
+    respect_robots: bool = True  # jawne zakazy (Disallow) w robots.txt są zawsze respektowane
+    robots_unreachable_policy: str = "allow"  # robots.txt nieosiągalny (timeout/5xx): "allow" albo "disallow" (RFC 9309)
+    robots_timeout: float = 8.0  # krótki timeout dla robots.txt
+    skip_dead_hosts: bool = True  # host, który nie odpowiada, pomijamy do końca przebiegu (bez kolejnych timeoutów)
 
     # Logika wyszukiwania
     fuzzy_manufacturer_match: bool = True

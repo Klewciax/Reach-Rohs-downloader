@@ -142,8 +142,8 @@ def test_access_error_shows_server_message_and_hint(tmp_path):
 
     with responses.RequestsMock() as rs:
         rs.post("https://sandbox-api.digikey.com/v1/oauth2/token", json={"access_token": "t", "expires_in": 600})
-        rs.get("https://sandbox-api.digikey.com/products/v4/search/LM358DR/productdetails", status=403,
-               json={"ErrorMessage": "The client is not authorized for this product"})
+        rs.post("https://sandbox-api.digikey.com/products/v4/search/keyword", status=403,
+                json={"ErrorMessage": "The client is not authorized for this product"})
         msg = _test_one(DigiKeyClient(PoliteSession(s), {"DIGIKEY_CLIENT_ID": "a", "DIGIKEY_CLIENT_SECRET": "b",
                                                           "DIGIKEY_SANDBOX": "true"}))
     assert "not authorized" in msg and "Product Information v4" in msg

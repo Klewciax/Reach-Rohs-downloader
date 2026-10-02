@@ -124,7 +124,7 @@ def _show(v: str, mask: bool) -> str:
     return (_mask(v) if mask else f"'{v}'") + f" ({len(v)} znaków)"
 
 
-def status_lines(settings, check: bool = False, mask: bool = False) -> list[str]:
+def status_lines(settings, check: bool = False, mask: bool = False, mpn: str = "LM358DR") -> list[str]:
     from .distributors import CLIENTS, DistributorHub
     from .http_client import PoliteSession
 
@@ -152,7 +152,7 @@ def status_lines(settings, check: bool = False, mask: bool = False) -> list[str]
     if check:
         hub = DistributorHub(PoliteSession(settings), settings.distributor_sources, keys)
         for client in hub.clients:
-            lines.append(f"  test {client.name}: {_test_one(client)}")
+            lines.append(f"  test {client.name}: {_test_one(client, mpn)}")
     return lines
 
 
@@ -308,12 +308,18 @@ def setup_wizard(path: Path, input_fn=input, secret_fn=None, out=print, test_fn=
     return len(changed)
 
 
-def _test_one(client) -> str:
+def _test_one(client, mpn: str = "LM358DR") -> str:
     from .http_client import FetchError, LoginRequired
 
     try:
-        parts = client.lookup("LM358DR")
-        return f"OK – dostęp działa (wyników dla LM358DR: {len(parts)})"
+        parts = client.lookup(mpn)
+        if not parts:
+            return (f"dostęp działa, ale brak wyników dla {mpn} – uruchom z --debug, aby zobaczyć odpowiedź API")
+        found = "; ".join(f"{p.mpn} ({p.manufacturer}), dokumentów: {len(p.documents)}"
+                          + (f", RoHS: {p.rohs_status}" if p.rohs_status else "")
+                          + (f", strona producenta: {p.manufacturer_homepage}" if p.manufacturer_homepage else "")
+                          for p in parts[:3])
+        return f"OK – dostęp działa, wyniki dla {mpn}: {found}"
     except LoginRequired as exc:
         hint = client.explain(exc)
         return f"BŁĄD DOSTĘPU – {exc}" + (f"\n        Co sprawdzić: {hint}" if hint else "")
@@ -353,6 +359,8 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("status", help="Pokaż, które klucze są ustawione")
     s.add_argument("--check", action="store_true", help="Sprawdź klucze zapytaniem do API")
     s.add_argument("--mask", action="store_true", help="Zamaskuj klucze na wydruku (domyślnie widoczne)")
+    s.add_argument("--mpn", default="LM358DR", help="MPN do testu (domyślnie LM358DR)")
+    s.add_argument("--debug", action="store_true", help="Pokaż surowe odpowiedzi API (diagnostyka)")
     s.add_argument("-c", "--config", help="Plik konfiguracyjny YAML")
     r = sub.add_parser("remove", help="Usuń klucze wybranego serwisu")
     r.add_argument("service", choices=[svc.section for svc in SERVICES])
@@ -386,7 +394,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Usunięto klucze: {svc.name}")
         return 0
     settings = Settings.load(getattr(args, "config", None), {"credentials_file": str(target)})
-    for line in status_lines(settings, check=args.check, mask=args.mask):
+    if args.debug:
+        from . import distributors
+
+        def sink(source, what, data):
+            text = json.dumps(data, ensure_ascii=False, indent=1)
+            print(f"--- [{source}] {what} ---\n{text[:3000]}{' …(obcięto)' if len(text) > 3000 else ''}")
+        distributors.DEBUG_SINK = sink
+        logging.getLogger().setLevel(logging.INFO)
+    for line in status_lines(settings, check=args.check or args.debug, mask=args.mask, mpn=args.mpn):
         print(line)
     return 0
 

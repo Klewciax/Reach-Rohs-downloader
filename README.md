@@ -447,6 +447,8 @@ rejestracji przy każdym serwisie: [`config/credentials.example.yaml`](config/cr
     (DigiKey) albo do zakresu „Supply” (Nexar);
   - Mouser: klucz innego API niż Search API.
 - `status --mask` ukrywa wartości, np. gdy wysyłasz komuś zrzut ekranu.
+- `status --check --mpn 50212-8000` testuje konkretną część z Twojego BoM.
+- `status --debug --mpn …` pokazuje surowe odpowiedzi API (diagnostyka, gdy API nic nie zwraca).
 
 ## Producenci spoza rejestru: wykrywanie automatyczne
 
@@ -483,9 +485,15 @@ skuteczność zależy od tego, czy jego strona ma statyczne linki do dokumentów
 
 ## Uprzejmość wobec serwisów
 
-- `robots.txt` jest respektowany zgodnie z RFC 9309: brak pliku oznacza brak ograniczeń, a gdy plik
-  jest nieosiągalny (5xx, błąd sieci), z danego hosta nic nie jest pobierane. Uwzględniany jest też
-  `Crawl-delay`.
+- `robots.txt`: jawne zakazy (`Disallow`) i `Crawl-delay` są respektowane. Brak pliku, strona HTML
+  zamiast pliku albo brak odpowiedzi (timeout, 5xx) **nie** blokują pobierania. Większość producentów
+  nie ma robots.txt albo odpowiada na niego wolno. robots.txt jest pobierany z krótkim timeoutem
+  (8 s) i bez ponowień. Ściśle według RFC 9309 (brak odpowiedzi = zakaz):
+  `robots_unreachable_policy: disallow`.
+- **Host, który nie odpowiada** (timeout, odrzucone połączenie), jest pomijany do końca przebiegu, więc
+  kolejne pozycje tego producenta nie czekają ponownie na timeout. W raporcie widać przyczynę.
+- Narzędzie przedstawia się jak przeglądarka (`user_agent`), bo część serwisów z ochroną antybotową
+  (np. Akamai) „zawiesza” połączenia od innych klientów. Tempo zapytań i zakazy robots.txt nadal obowiązują.
 - Tempo zapytań to domyślnie co najmniej 2 s między zapytaniami do tego samego hosta, plus losowy jitter.
 - Retry z wykładniczym backoffem dla 429/5xx i błędów sieci, z uwzględnieniem nagłówka `Retry-After`.
 - Strony i dokumenty są cache'owane w obrębie przebiegu, więc wspólne strony compliance

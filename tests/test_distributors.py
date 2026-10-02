@@ -41,12 +41,15 @@ def _item(reg, mpn, mfr):
 
 def _digikey(mpn, manufacturer, media):
     responses.post(DK_TOKEN, json={"access_token": "tok", "expires_in": 600})
-    responses.get(f"{DK}/{mpn}/productdetails", json={"Product": {
+    product = {
         "ManufacturerProductNumber": mpn, "Manufacturer": {"Name": manufacturer},
         "DatasheetUrl": "https://www.acme-components.com/ds.pdf", "ProductUrl": "https://www.digikey.com/x",
         "Classifications": {"RohsStatus": "ROHS3 Compliant", "ReachStatus": "REACH Unaffected"},
-        "ProductStatus": {"Id": 0, "Status": "Active"}}})
-    responses.get(f"{DK}/{mpn}/media", json={"MediaLinks": media})
+        "ProductStatus": {"Id": 0, "Status": "Active"},
+        "ProductVariations": [{"DigiKeyProductNumber": f"{mpn}CT-ND"}, {"DigiKeyProductNumber": f"{mpn}TR-ND"}]}
+    # Odpowiedź keyword: ten sam MPN w ExactMatches i Products (warianty opakowania) – ma dać 1 część
+    responses.post(f"{DK}/keyword", json={"ExactMatches": [product], "Products": [product], "ProductsCount": 2})
+    responses.get(f"{DK}/{mpn}CT-ND/media", json={"MediaLinks": media})
 
 
 @responses.activate
@@ -69,7 +72,9 @@ def test_digikey_fallback_downloads_manufacturer_document(tmp_path, monkeypatch)
     doc = res.docs[0]
     assert doc.source == "DigiKey" and doc.issuer and "__z_DigiKey" in doc.path
     assert not any("ds.pdf" in c.request.url for c in responses.calls)  # sama karta katalogowa pominięta
-    assert res.distributor_parts[0].rohs_status == "ROHS3 Compliant"
+    assert len(res.distributor_parts) == 1 and res.distributor_parts[0].rohs_status == "ROHS3 Compliant"
+    kw = json.loads(next(c.request.body for c in responses.calls if c.request.url.endswith("/keyword")))
+    assert kw["Keywords"] == "NDS331N"
 
 
 @responses.activate
@@ -209,3 +214,24 @@ def test_guess_domains_and_name_check():
     assert "acme.com" in guess_domains("Acme Connectors Ltd")
     assert name_matches_site("Acme Connectors Ltd", "<title>ACME Connectors | Home</title>")[0]
     assert not name_matches_site("Acme Connectors Ltd", "<title>Domain for sale</title>")[0]
+
+
+@responses.activate
+def test_nexar_graphql_errors_are_reported_and_retried(tmp_path, monkeypatch):
+    monkeypatch.setenv("NEXAR_CLIENT_ID", "id")
+    monkeypatch.setenv("NEXAR_CLIENT_SECRET", "secret")
+    responses.post("https://identity.nexar.com/connect/token", json={"access_token": "t", "expires_in": 3600})
+    responses.post("https://api.nexar.com/graphql",
+                   json={"errors": [{"message": "Field documentCollections is not available on your plan"}],
+                         "data": None})
+    responses.post("https://api.nexar.com/graphql", json={"data": {"supSearchMpn": {"results": [{"part": {
+        "mpn": "LM358DR", "manufacturer": {"name": "Texas Instruments", "homepageUrl": "https://www.ti.com"}}}]}}})
+    s = _settings(tmp_path)
+    seen = []
+    import bom_compliance.distributors as d
+    monkeypatch.setattr(d, "DEBUG_SINK", lambda src, what, data: seen.append((src, what)))
+    hub = DistributorHub(PoliteSession(s, sleep=lambda _: None), ["nexar"])
+    parts = hub.lookup("LM358DR")
+    assert parts and parts[0].manufacturer_homepage == "https://www.ti.com"
+    assert len([c for c in responses.calls if "graphql" in c.request.url]) == 2  # ponowienie w wersji minimalnej
+    assert len(seen) == 2

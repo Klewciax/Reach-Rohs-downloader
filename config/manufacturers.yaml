@@ -398,3 +398,162 @@ manufacturers:
     longevity_pages:
       - https://www.renesas.com/en/support/product-longevity-program-plp
       - https://www.renesas.com/en/product-longevity-program-plp-former-dialog-products
+
+  # --- Popularni producenci złączy, elementów pasywnych i układów – mechanizm generyczny ---
+  # (bez skonfigurowanych stron compliance: crawl od strony głównej; domeny = oficjalne strony firm)
+  molex:
+    name: Molex
+    domains: [molex.com]
+    aliases: [Molex, Molex LLC, Molex Inc, Molex Incorporated, Molex Connector]
+  te_connectivity:
+    name: TE Connectivity
+    domains: [te.com]
+    aliases: [TE, TE Connectivity, TE Connectivity Ltd, Tyco Electronics, Tyco, AMP, TE Connectivity AMP, Raychem]
+  amphenol:
+    name: Amphenol
+    domains: [amphenol.com, amphenol-cs.com, amphenol-icc.com]
+    aliases: [Amphenol, Amphenol Corporation, Amphenol ICC, Amphenol FCI, FCI, Amphenol Communications Solutions]
+  jst:
+    name: JST
+    domains: [jst-mfg.com]
+    aliases: [JST, JST Mfg, J.S.T. Mfg, JST Sales America, Japan Solderless Terminal]
+  samtec:
+    name: Samtec
+    domains: [samtec.com]
+    aliases: [Samtec, Samtec Inc]
+  hirose:
+    name: Hirose Electric
+    domains: [hirose.com]
+    aliases: [Hirose, Hirose Electric, HRS]
+  phoenix_contact:
+    name: Phoenix Contact
+    domains: [phoenixcontact.com]
+    aliases: [Phoenix Contact, Phoenix]
+  wago:
+    name: WAGO
+    domains: [wago.com]
+    aliases: [WAGO, Wago Kontakttechnik]
+  harwin:
+    name: Harwin
+    domains: [harwin.com]
+    aliases: [Harwin, Harwin Inc]
+  keystone:
+    name: Keystone Electronics
+    domains: [keyelco.com]
+    aliases: [Keystone, Keystone Electronics]
+  littelfuse:
+    name: Littelfuse
+    domains: [littelfuse.com]
+    aliases: [Littelfuse, Littelfuse Inc]
+  bel_fuse:
+    name: Bel Fuse
+    domains: [belfuse.com]
+    aliases: [Bel Fuse, Bel, Bel Fuse Inc]
+  diodes:
+    name: Diodes Incorporated
+    domains: [diodes.com]
+    aliases: [Diodes, Diodes Inc, Diodes Incorporated, Zetex]
+  rohm:
+    name: ROHM Semiconductor
+    domains: [rohm.com]
+    aliases: [ROHM, Rohm Semiconductor, ROHM Co, Lapis]
+  toshiba:
+    name: Toshiba Electronic Devices & Storage
+    domains: [toshiba.semicon-storage.com]
+    aliases: [Toshiba, Toshiba Semiconductor, Toshiba Electronic Devices and Storage]
+  panasonic:
+    name: Panasonic
+    domains: [panasonic.com]
+    aliases: [Panasonic, Panasonic Industry, Panasonic Electronic Components]
+  kyocera_avx:
+    name: KYOCERA AVX
+    domains: [kyocera-avx.com, avx.com]
+    aliases: [AVX, KYOCERA AVX, Kyocera AVX Components, AVX Corporation]
+  samsung_em:
+    name: Samsung Electro-Mechanics
+    domains: [samsungsem.com]
+    aliases: [Samsung Electro-Mechanics, Samsung Electro Mechanics, SEMCO]
+  taiyo_yuden:
+    name: Taiyo Yuden
+    domains: [yuden.co.jp]
+    aliases: [Taiyo Yuden, TAIYO YUDEN Co]
+  coilcraft:
+    name: Coilcraft
+    domains: [coilcraft.com]
+    aliases: [Coilcraft, Coilcraft Inc]
+  abracon:
+    name: Abracon
+    domains: [abracon.com]
+    aliases: [Abracon, Abracon LLC]
+  nordic:
+    name: Nordic Semiconductor
+    domains: [nordicsemi.com]
+    aliases: [Nordic, Nordic Semiconductor, Nordic Semiconductor ASA]
+  espressif:
+    name: Espressif Systems
+    domains: [espressif.com]
+    aliases: [Espressif, Espressif Systems]
+  silabs:
+    name: Silicon Labs
+    domains: [silabs.com]
+    aliases: [Silicon Labs, Silicon Laboratories, SiLabs]
+  liteon:
+    name: Lite-On
+    domains: [liteon.com]
+    aliases: [Lite-On, LiteOn, Lite On Technology]
+  kingbright:
+    name: Kingbright
+    domains: [kingbright.com]
+    aliases: [Kingbright]
+  ams_osram:
+    name: ams OSRAM
+    domains: [ams-osram.com, osram.com]
+    aliases: [OSRAM, ams OSRAM, OSRAM Opto Semiconductors, ams]
+  sensirion:
+    name: Sensirion
+    domains: [sensirion.com]
+    aliases: [Sensirion, Sensirion AG]
+  bosch_sensortec:
+    name: Bosch Sensortec
+    domains: [bosch-sensortec.com]
+    aliases: [Bosch Sensortec, Bosch]
+  micron:
+    name: Micron Technology
+    domains: [micron.com]
+    aliases: [Micron, Micron Technology]
+  winbond:
+    name: Winbond
+    domains: [winbond.com]
+    aliases: [Winbond, Winbond Electronics]
+  macronix:
+    name: Macronix
+    domains: [macronix.com]
+    aliases: [Macronix, Macronix International, MXIC]
+  semtech:
+    name: Semtech
+    domains: [semtech.com]
+    aliases: [Semtech, Semtech Corporation]
+  mps:
+    name: Monolithic Power Systems
+    domains: [monolithicpower.com]
+    aliases: [MPS, Monolithic Power Systems, Monolithic Power]
+  aos:
+    name: Alpha & Omega Semiconductor
+    domains: [aosmd.com]
+    aliases: [AOS, Alpha and Omega Semiconductor, Alpha & Omega]
+  recom:
+    name: RECOM
+    domains: [recom-power.com]
+    aliases: [RECOM, Recom Power]
+  traco:
+    name: TRACO Power
+    domains: [tracopower.com]
+    aliases: [Traco, TRACO Power, Traco Electronic]
+  meanwell:
+    name: MEAN WELL
+    domains: [meanwell.com]
+    aliases: [Mean Well, MEANWELL, MEAN WELL Enterprises]
+  cui:
+    name: CUI Devices
+    domains: [cuidevices.com]
+    aliases: [CUI, CUI Devices, CUI Inc]

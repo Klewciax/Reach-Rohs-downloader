@@ -34,6 +34,15 @@ from .http_client import FetchError, LoginRequired, PoliteSession
 
 log = logging.getLogger(__name__)
 
+# Tryb diagnostyczny: funkcja(źródło, opis, dane) wywoływana z surowymi odpowiedziami API
+DEBUG_SINK = None
+
+
+def _debug(source: str, what: str, data) -> None:
+    if DEBUG_SINK is not None:
+        DEBUG_SINK(source, what, data)
+
+
 # Dokumenty, które nas interesują (nazwa / tytuł / URL)
 DOC_KEYWORDS = re.compile(r"rohs|reach|svhc|environment|compliance|material|declaration|certificate|"
                           r"conformity|green|halogen|ipc.?1752|mcd|lead.?free|eco", re.I)
@@ -131,7 +140,7 @@ class NexarClient(_OAuthClient):
     doc_domains = ["octopart.com", "nexar.com"]
     token_url = "https://identity.nexar.com/connect/token"
     scope = "supply.domain"
-    QUERY = """query($q: String!) {
+    QUERY_FULL = """query($q: String!) {
   supSearchMpn(q: $q, limit: 5) {
     results { part {
       mpn
@@ -141,16 +150,39 @@ class NexarClient(_OAuthClient):
     } }
   }
 }"""
+    # Wersja minimalna – gdy plan Nexar nie obejmuje niektórych pól (np. dokumentów)
+    QUERY_MIN = """query($q: String!) {
+  supSearchMpn(q: $q, limit: 5) {
+    results { part { mpn manufacturer { name homepageUrl } } }
+  }
+}"""
+    QUERY = QUERY_FULL
 
     def explain(self, exc: Exception) -> str:
         return super().explain(exc) or ("token uzyskany, ale API odmawia dostępu – w portalu Nexar sprawdź, "
                                         "czy aplikacja ma zakres (scope) 'Supply' i nie wyczerpała limitu")
 
-    def lookup(self, mpn: str) -> list[DistributorPart]:
+    def _query(self, query: str, mpn: str) -> dict:
         resp = self.session.api("POST", "https://api.nexar.com/graphql", self.api_domains,
-                                json={"query": self.QUERY, "variables": {"q": mpn}},
+                                json={"query": query, "variables": {"q": mpn}},
                                 headers={"Authorization": f"Bearer {self.token()}"})
-        data = resp.json()
+        data = resp.json() or {}
+        _debug(self.name, f"GraphQL supSearchMpn({mpn})", data)
+        return data
+
+    def lookup(self, mpn: str) -> list[DistributorPart]:
+        data = self._query(self.QUERY, mpn)
+        errors = data.get("errors") or []
+        if errors and not ((data.get("data") or {}).get("supSearchMpn") or {}).get("results"):
+            msgs = "; ".join(str(e.get("message", e)) for e in errors)
+            log.warning("Nexar: błąd zapytania (%s) – ponawiam w wersji uproszczonej", msgs)
+            data = self._query(self.QUERY_MIN, mpn)
+            errors2 = data.get("errors") or []
+            if errors2 and not ((data.get("data") or {}).get("supSearchMpn") or {}).get("results"):
+                msgs2 = "; ".join(str(e.get("message", e)) for e in errors2)
+                if re.search(r"auth|scope|permission|forbidden|access|limit|quota", msgs2, re.I):
+                    raise LoginRequired("https://api.nexar.com/graphql", f"Nexar: {msgs2}", 403)
+                raise FetchError("https://api.nexar.com/graphql", f"Nexar GraphQL: {msgs2}")
         out = []
         for res in (((data.get("data") or {}).get("supSearchMpn") or {}).get("results") or []):
             part = res.get("part") or {}
@@ -193,33 +225,73 @@ class DigiKeyClient(_OAuthClient):
         return {"Authorization": f"Bearer {self.token()}", "X-DIGIKEY-Client-Id": self.keys["DIGIKEY_CLIENT_ID"],
                 "X-DIGIKEY-Locale-Language": "en"}
 
-    def lookup(self, mpn: str) -> list[DistributorPart]:
-        q = quote(mpn, safe="")
-        try:
-            resp = self.session.api("GET", f"{self.BASE}/{q}/productdetails", self.api_domains, headers=self._headers())
-        except FetchError as exc:
-            if exc.status == 404:
-                return []
-            raise
-        prod = (resp.json() or {}).get("Product") or {}
-        if not prod:
-            return []
+    def _part_from(self, prod: dict) -> DistributorPart:
         cls = prod.get("Classifications") or {}
-        part = DistributorPart(self.name, prod.get("ManufacturerProductNumber", ""),
+        status = prod.get("ProductStatus") or {}
+        return DistributorPart(self.name, prod.get("ManufacturerProductNumber", ""),
                                (prod.get("Manufacturer") or {}).get("Name", ""),
                                datasheet_url=prod.get("DatasheetUrl") or "", product_url=prod.get("ProductUrl") or "",
                                rohs_status=cls.get("RohsStatus") or "", reach_status=cls.get("ReachStatus") or "",
-                               lifecycle_status=(prod.get("ProductStatus") or {}).get("Status")
-                               or (prod.get("ProductStatus") or {}).get("Text") or "")
+                               lifecycle_status=status.get("Status") or status.get("Text") or "")
+
+    def _search(self, mpn: str) -> list[dict]:
+        """Wyszukiwanie po słowie kluczowym: działa też dla MPN, które DigiKey sprzedaje w kilku
+        wariantach opakowania (cut tape / reel) – productdetails potrafi wtedy nic nie zwrócić."""
+        body = {"Keywords": mpn, "Limit": 10, "Offset": 0}
+        data = self.session.api("POST", f"{self.BASE}/keyword", self.api_domains, json=body,
+                                headers=self._headers()).json() or {}
+        _debug(self.name, f"keyword({mpn})", data)
+        prods = list(data.get("ExactMatches") or []) + list(data.get("Products") or [])
+        exact = [p for p in prods if compact(p.get("ManufacturerProductNumber", "")) == compact(mpn)]
+        uniq, seen = [], set()
+        for p in exact:
+            key = (compact(p.get("ManufacturerProductNumber", "")), (p.get("Manufacturer") or {}).get("Name", ""))
+            if key not in seen:
+                seen.add(key)
+                uniq.append(p)
+        return uniq
+
+    def _details(self, mpn: str) -> list[dict]:
         try:
-            media = self.session.api("GET", f"{self.BASE}/{q}/media", self.api_domains, headers=self._headers()).json()
-            for m in (media or {}).get("MediaLinks") or []:
-                if m.get("Url"):
-                    part.documents.append(DistributorDoc(f"{m.get('MediaType', '')}: {m.get('Title', '')}",
-                                                         _abs(m["Url"])))
+            resp = self.session.api("GET", f"{self.BASE}/{quote(mpn, safe='')}/productdetails", self.api_domains,
+                                    headers=self._headers())
         except FetchError as exc:
-            log.info("DigiKey media %s: %s", mpn, exc)
-        return [part]
+            if exc.status in (400, 404):
+                return []
+            raise
+        data = resp.json() or {}
+        _debug(self.name, f"productdetails({mpn})", data)
+        prod = data.get("Product") or {}
+        return [prod] if prod else []
+
+    def lookup(self, mpn: str) -> list[DistributorPart]:
+        try:
+            prods = self._search(mpn)
+        except FetchError as exc:
+            if isinstance(exc, LoginRequired):
+                raise
+            log.info("DigiKey keyword %s: %s – próbuję productdetails", mpn, exc)
+            prods = []
+        if not prods:
+            prods = self._details(mpn)
+        out = []
+        for prod in prods:
+            part = self._part_from(prod)
+            dk_numbers = [v.get("DigiKeyProductNumber") for v in prod.get("ProductVariations") or []
+                          if v.get("DigiKeyProductNumber")]
+            media_key = quote(dk_numbers[0] if dk_numbers else part.mpn or mpn, safe="")
+            try:
+                media = self.session.api("GET", f"{self.BASE}/{media_key}/media", self.api_domains,
+                                         headers=self._headers()).json()
+                _debug(self.name, f"media({media_key})", media)
+                for m in (media or {}).get("MediaLinks") or []:
+                    if m.get("Url"):
+                        part.documents.append(DistributorDoc(f"{m.get('MediaType', '')}: {m.get('Title', '')}",
+                                                             _abs(m["Url"])))
+            except FetchError as exc:
+                log.info("DigiKey media %s: %s", mpn, exc)
+            out.append(part)
+        return out
 
 
 class MouserClient(DistributorClient):
@@ -238,6 +310,7 @@ class MouserClient(DistributorClient):
         url = f"https://api.mouser.com/api/v1/search/partnumber?apiKey={self.keys['MOUSER_API_KEY']}"
         body = {"SearchByPartRequest": {"mouserPartNumber": mpn, "partSearchOptions": "Exact"}}
         data = self.session.api("POST", url, self.api_domains, json=body).json() or {}
+        _debug(self.name, f"partnumber({mpn})", data)
         if data.get("Errors"):
             msgs = "; ".join(str(e.get("Message") or e) if isinstance(e, dict) else str(e) for e in data["Errors"])
             if re.search(r"invalid|key|unauthori|identifier", msgs, re.I):
