@@ -263,6 +263,9 @@ def _test_client(settings, client_key: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from . import prepare_console
+
+    prepare_console()
     from .config import Settings
 
     p = argparse.ArgumentParser(

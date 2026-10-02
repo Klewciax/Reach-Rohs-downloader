@@ -202,6 +202,9 @@ def exit_code(checks: list[Check], live: list[Check] | None = None) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from . import prepare_console
+
+    prepare_console()
     p = argparse.ArgumentParser(prog="bom_compliance.smoke", description="Smoke test bom-compliance")
     p.add_argument("--live", action="store_true", help="Wykonaj prawdziwe zapytania do stron producentów")
     p.add_argument("--only", action="append", default=[], help="Klucz producenta z manufacturers.yaml (wielokrotnie)")

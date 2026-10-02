@@ -69,6 +69,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from . import prepare_console
+
+    prepare_console()
     args = build_parser().parse_args(argv)
     try:
         cols = _parse_cols(args.col)

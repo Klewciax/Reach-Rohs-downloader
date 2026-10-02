@@ -39,6 +39,24 @@ python -m pytest -m smoke     # tylko smoke testy
 
 ## Szybki start
 
+### Windows (PowerShell)
+
+```powershell
+cd C:\ścieżka\do\Reach-Rohs-downloader
+python -m pip install -r requirements.txt          # jednorazowo: instalacja bibliotek
+python -m bom_compliance.credentials               # opcjonalnie: kreator kluczy API
+python -m bom_compliance twoj_bom.xlsx --dry-run   # podgląd: arkusze, kolumny, MPN
+python -m bom_compliance twoj_bom.xlsx -o output   # wynik: output\report.xlsx + output\documents\
+```
+
+- Jeśli `python` nie działa, użyj `py` (np. `py -m pip install -r requirements.txt`).
+- W środowisku wirtualnym: `python -m venv .venv`, potem `.\.venv\Scripts\Activate.ps1`, a następnie
+  `pip install`. Jeśli PowerShell blokuje skrypt aktywacji, wykonaj raz
+  `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+- Gdy brakuje bibliotek, narzędzie wypisze, którą komendą je doinstalować.
+
+### Linux / macOS
+
 ```bash
 pip install -r requirements.txt
 python -m bom_compliance.credentials           # opcjonalnie: kreator kluczy API (DigiKey, Octopart…)
