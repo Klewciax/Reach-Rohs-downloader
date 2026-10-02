@@ -60,8 +60,38 @@ class ManufacturerRegistry:
                         raise ValueError(f"Alias '{alias}' wskazuje na dwóch producentów: {other} i {m.key}")
                     self._index[form] = m.key
 
+    def add(self, m: ManufacturerInfo) -> list[str]:
+        """Dodaje producenta w trakcie działania (np. wykrytego automatycznie). Zwraca pominięte aliasy."""
+        skipped = []
+        if m.key in self.manufacturers:
+            return skipped
+        self.manufacturers[m.key] = m
+        for alias in [m.name, *m.aliases]:
+            for form in {normalize_name(alias), strip_legal(normalize_name(alias))}:
+                if not form:
+                    continue
+                if self._index.get(form, m.key) != m.key:
+                    skipped.append(alias)
+                    continue
+                self._index[form] = m.key
+        return skipped
+
+    def merge_yaml(self, path: str | Path) -> int:
+        """Dołącza producentów z dodatkowego pliku (np. discovered_manufacturers.yaml)."""
+        path = Path(path)
+        if not path.is_file():
+            return 0
+        extra = ManufacturerRegistry._load_entries(path)
+        for m in extra:
+            self.add(m)
+        return len(extra)
+
     @classmethod
     def from_yaml(cls, path: str | Path, fuzzy: bool = True, cutoff: float = 0.88) -> "ManufacturerRegistry":
+        return cls(cls._load_entries(path), fuzzy=fuzzy, cutoff=cutoff)
+
+    @staticmethod
+    def _load_entries(path: str | Path) -> list[ManufacturerInfo]:
         with open(path, encoding="utf-8") as fh:
             data = yaml.safe_load(fh) or {}
         items = []
@@ -82,9 +112,10 @@ class ManufacturerRegistry:
                     product_pages=entry.get("product_pages", []) or [],
                     longevity_pages=entry.get("longevity_pages", []) or [],
                     longevity_documents=entry.get("longevity_documents", []) or [],
+                    auto_discovered=entry.get("auto_discovered") or {},
                 )
             )
-        return cls(items, fuzzy=fuzzy, cutoff=cutoff)
+        return items
 
     def resolve(self, raw_name: str) -> tuple[ManufacturerInfo | None, str]:
         """Zwraca (producent, metoda dopasowania): exact / stripped / fuzzy / none."""

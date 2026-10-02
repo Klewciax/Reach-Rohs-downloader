@@ -2,16 +2,21 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 from .adapters import AdapterContext, get_adapter
 from .config import Settings
 from .downloader import Downloader, NotADocument
+from .classify import compact, types_from_link
+from .discovery import ManufacturerDiscovery, _same_company
+from .distributors import DOC_KEYWORDS, DistributorHub
 from .lifecycle import LifecycleChecker
+from .manufacturers import ManufacturerRegistry
 from .mpn import FORM_FULL, MpnCheck, inspect_mpn, packaging_trims, wildcard_prefix
 from .http_client import DomainNotAllowed, FetchError, LoginRequired, PoliteSession, RobotsDisallowed, host_allowed
-from .models import (BomItem, Candidate, DocType, ItemResult, LifecycleInfo, LongevityInfo, Scope, SearchResult,
-                     Status)
+from .models import (BomItem, Candidate, DocType, ItemResult, LifecycleInfo, LongevityInfo, ManufacturerInfo, Scope,
+                     SearchResult, Status)
 
 log = logging.getLogger(__name__)
 
@@ -29,12 +34,18 @@ def is_success(status: Status, settings: Settings) -> bool:
 
 
 class Pipeline:
-    def __init__(self, settings: Settings, out_dir: Path, session: PoliteSession | None = None):
+    def __init__(self, settings: Settings, out_dir: Path, session: PoliteSession | None = None,
+                 registry: ManufacturerRegistry | None = None):
         self.settings = settings
         self.session = session or PoliteSession(settings)
+        self.registry = registry
         self.downloader = Downloader(self.session, settings, out_dir)
         self.lifecycle = LifecycleChecker(lambda m: AdapterContext(self.session, settings, m),
                                           self.downloader, out_dir, settings)
+        self.hub = DistributorHub(self.session, settings.distributor_sources if settings.distributor_fallback
+                                  or settings.auto_discover_manufacturers else [], settings.api_keys)
+        self.discovery = ManufacturerDiscovery(self.session, self.hub, settings.discovered_manufacturers_file,
+                                               settings.auto_discover_manufacturers)
 
     def process(self, items: list[BomItem], progress=None) -> list[ItemResult]:
         results = []
@@ -49,10 +60,16 @@ class Pipeline:
     def process_item(self, item: BomItem) -> ItemResult:
         res = ItemResult(item=item)
         if item.manufacturer is None:
+            self._discover(item, res)
+        if item.manufacturer is None:
+            if self.settings.distributor_fallback and self.hub.active:
+                return self._distributor_only(item, res)
             res.rohs_status = res.reach_status = Status.UNKNOWN_MANUFACTURER
             res.reasons.append(
-                f"Producent '{item.manufacturer_raw}' nie występuje w rejestrze (config/manufacturers.yaml) – "
-                "brak zweryfikowanej domeny, nic nie pobrano. Do ręcznej weryfikacji / dodaj producenta do rejestru")
+                f"Producent '{item.manufacturer_raw}' spoza rejestru – nie udało się automatycznie wykryć i "
+                "zweryfikować jego strony" + ("" if self.hub.active else
+                                              " (brak kluczy API dystrybutorów, które pomagają w wykryciu)") +
+                ". Nic nie pobrano – do ręcznej weryfikacji")
             if self.settings.check_lifecycle:
                 res.lifecycle = LifecycleInfo(note="nieznany producent – do ręcznej weryfikacji")
             if self.settings.check_longevity:
@@ -69,6 +86,9 @@ class Pipeline:
         self._download_candidates(item, search, res)
         if not self._has_specific(res):
             self._fallback_trimmed(item, adapter, ctx, search, res)
+        if self.settings.distributor_fallback and self.hub.active and (
+                not self._covers_both(res) or self.settings.distributor_lookup_always):
+            self._distributor_fallback(item, res, search)
 
         res.manual_urls = list(dict.fromkeys(search.manual_urls))
         res.notes.extend(search.notes)
@@ -95,6 +115,85 @@ class Pipeline:
         if item.hints and not check.expanded_to and check.form != FORM_FULL:
             res.notes.append("W innych kolumnach BoM (np. opis) występuje dłuższy numer: " + ", ".join(item.hints)
                              + " – możliwe, że to pełny MPN")
+
+    # ----------------------------------------------- producent spoza rejestru
+    def _discover(self, item: BomItem, res: ItemResult) -> None:
+        found = self.discovery.discover(item.manufacturer_raw, item.mpn)
+        if not found:
+            return
+        if self.registry is not None:
+            self.registry.add(found.info)
+        for url, entry in (found.pages or {}).items():
+            self.session.page_cache.setdefault(url, entry)
+        item.manufacturer, item.match_method = found.info, "auto"
+        res.notes.append(f"Producent spoza rejestru – oficjalna strona wykryta automatycznie: {found.info.domains[0]} "
+                         f"({found.method}; potwierdzenie: {found.evidence}) – zweryfikuj")
+
+    def _distributor_only(self, item: BomItem, res: ItemResult) -> ItemResult:
+        """Producent nieznany i bez wykrytej strony – próbujemy tylko dystrybutorów (para MPN + nazwa z BoM)."""
+        item.manufacturer = ManufacturerInfo(key="?" + item.manufacturer_raw, name=item.manufacturer_raw,
+                                             domains=[], adapter="generic", aliases=[item.manufacturer_raw])
+        search = SearchResult()
+        self._distributor_fallback(item, res, search)
+        res.rohs_status = self._status_for(DocType.ROHS, res, search)
+        res.reach_status = self._status_for(DocType.REACH, res, search)
+        for attr in ("rohs_status", "reach_status"):
+            if getattr(res, attr) in (Status.NOT_FOUND, Status.ERROR):
+                setattr(res, attr, Status.UNKNOWN_MANUFACTURER)
+        res.reasons = [f"Producent '{item.manufacturer_raw}' spoza rejestru, jego strony nie udało się wykryć – "
+                       "sprawdzono tylko dystrybutorów"] + self._reasons(res, search)
+        if self.settings.check_lifecycle:
+            res.lifecycle = LifecycleInfo(note="nieznany producent – status wg dystrybutorów w kolumnie obok")
+        if self.settings.check_longevity:
+            res.longevity = LongevityInfo(note="nieznany producent – do ręcznej weryfikacji")
+        return res
+
+    # ------------------------------------------------------- dystrybutorzy
+    def _part_matches(self, part, item: BomItem) -> bool:
+        if compact(part.mpn) != compact(item.mpn):
+            return False  # tylko dokładny MPN
+        if self.registry is not None and item.manufacturer and not item.manufacturer.key.startswith(("?", "auto_")):
+            m, _ = self.registry.resolve(part.manufacturer)
+            if m is not None:
+                return m.key == item.manufacturer.key
+        names = [item.manufacturer_raw] + ([item.manufacturer.name, *item.manufacturer.aliases]
+                                           if item.manufacturer else [])
+        return any(_same_company(n, part.manufacturer) for n in names if n)
+
+    def _distributor_fallback(self, item: BomItem, res: ItemResult, search: SearchResult) -> None:
+        parts = [p for p in self.hub.lookup(item.mpn) if self._part_matches(p, item)]
+        res.distributor_parts = parts
+        if not parts:
+            if self.hub.active:
+                res.notes.append("Dystrybutorzy: brak oferty z dokładnym MPN tego producenta")
+            return
+        if self._covers_both(res):
+            return  # tylko statusy (distributor_lookup_always)
+        cands = []
+        for p in parts:
+            for d in p.documents:
+                label = f"{d.title} {d.url}"
+                if not DOC_KEYWORDS.search(label):
+                    continue
+                if re.search(r"datasheet|data sheet", d.title, re.I) and not re.search(r"rohs|reach|environ|compl",
+                                                                                       label, re.I):
+                    continue
+                cands.append(Candidate(url=d.url, doc_types=types_from_link(d.url, d.title) or
+                                       {DocType.ROHS, DocType.REACH}, scope=Scope.PART, title=d.title,
+                                       source=p.source, extra_domains=self.hub.doc_domains(p.source),
+                                       note=f"źródło: {p.source}"))
+        if cands:
+            extra = SearchResult(candidates=cands)
+            self._download_candidates(item, extra, res)
+            search.login_required += extra.login_required
+            search.notes += [f"[dystrybutor] {n}" for n in extra.notes]
+        else:
+            res.notes.append("Dystrybutorzy: oferta znaleziona, ale bez dokumentów RoHS/REACH (tylko statusy)")
+
+    def _covers_both(self, res: ItemResult) -> bool:
+        def ok(t):
+            return any(t in d.doc_types and d.scope == Scope.PART for d in res.docs)
+        return ok(DocType.ROHS) and ok(DocType.REACH)
 
     def _has_specific(self, res: ItemResult) -> bool:
         return any(d.scope != Scope.GENERAL and d.doc_types & {DocType.ROHS, DocType.REACH} for d in res.docs)
@@ -140,8 +239,8 @@ class Pipeline:
             if attempted >= self.settings.max_docs_per_item:
                 res.notes.append(f"Osiągnięto limit {self.settings.max_docs_per_item} dokumentów na pozycję")
                 break
-            if not host_allowed(cand.url, item.manufacturer.domains):
-                log.warning("Pomijam URL spoza domen producenta: %s", cand.url)
+            if not host_allowed(cand.url, list(item.manufacturer.domains) + list(cand.extra_domains)):
+                log.warning("Pomijam URL spoza domen producenta / zaufanego dystrybutora: %s", cand.url)
                 continue
             if cand.scope != Scope.PART and self._covered(res, cand):
                 continue  # już mamy lepszy (specyficzny) dokument tego rodzaju

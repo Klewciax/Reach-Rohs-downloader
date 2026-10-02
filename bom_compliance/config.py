@@ -53,6 +53,14 @@ class Settings:
     expand_abbreviated_mpn: bool = True  # rozwiń skrót, gdy wariant jest jednoznaczny (zawsze oznaczane w raporcie)
     include_alternates: bool = True      # uwzględnij zamienniki (kolumny "Manufacturer 2 / MPN 2")
 
+    # Dystrybutorzy (zapasowe źródło) i automatyczne wykrywanie producentów
+    distributor_fallback: bool = True   # gdy strona producenta nie dała dokumentu dla MPN – szukaj u dystrybutorów
+    distributor_sources: list = field(default_factory=lambda: ["nexar", "digikey", "mouser", "tme"])
+    distributor_lookup_always: bool = False  # odpytuj dystrybutorów o statusy także dla kompletnych pozycji
+    api_keys: dict = field(default_factory=dict)  # alternatywa dla zmiennych środowiskowych (nie commituj!)
+    auto_discover_manufacturers: bool = True  # producent spoza rejestru -> wykryj i zweryfikuj jego domenę
+    discovered_manufacturers_file: str = str(PACKAGE_ROOT / "config" / "discovered_manufacturers.yaml")
+
     # Opcje dodatkowe: cykl życia i longevity
     check_lifecycle: bool = True       # status Active / NRND / EOL ze strony producenta
     check_longevity: bool = True       # program longevity / deklaracja długości produkcji

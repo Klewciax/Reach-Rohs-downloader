@@ -72,7 +72,8 @@ def test_full_run(tmp_path):
     _mock_sites()
     cfg = tmp_path / "cfg.yaml"
     out = tmp_path / "out"
-    cfg.write_text("min_delay_per_host: 0\ndelay_jitter: 0\nbackoff_base: 0\nmax_retries: 1\n")
+    cfg.write_text("min_delay_per_host: 0\ndelay_jitter: 0\nbackoff_base: 0\nmax_retries: 1\n"
+                   "auto_discover_manufacturers: false\n")
     bom = tmp_path / "bom.csv"
     bom.write_text(
         "RefDes,Mfr,MPN\n"

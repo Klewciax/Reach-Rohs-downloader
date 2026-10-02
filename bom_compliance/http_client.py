@@ -158,17 +158,22 @@ class PoliteSession:
 
     # ------------------------------------------------------------------- HTTP
     def _raw_get(self, url: str, host: str, stream: bool = False) -> requests.Response:
-        """GET z limitem tempa i retry (bez obsługi przekierowań)."""
+        return self._raw_request("GET", url, host, stream=stream)
+
+    def _raw_request(self, method: str, url: str, host: str, stream: bool = False, **kwargs) -> requests.Response:
+        """Zapytanie z limitem tempa i retry (bez obsługi przekierowań)."""
         s = self.settings
         last_error: str = "nieznany błąd"
         for attempt in range(s.max_retries + 1):
             self._throttle(host)
             try:
-                resp = self._session.get(
+                resp = self._session.request(
+                    method,
                     url,
                     timeout=(s.connect_timeout, s.read_timeout),
                     allow_redirects=False,
                     stream=stream,
+                    **kwargs,
                 )
             except (requests.ConnectionError, requests.Timeout) as exc:
                 last_error = f"błąd sieci: {exc.__class__.__name__}"
@@ -220,3 +225,19 @@ class PoliteSession:
                 raise FetchError(current, f"HTTP {resp.status_code}", resp.status_code)
             return resp
         raise FetchError(url, "Zbyt wiele przekierowań")
+
+    def api(self, method: str, url: str, domains: list[str], **kwargs) -> requests.Response:
+        """Wywołanie oficjalnego API (dystrybutora): bez robots.txt (API jest przeznaczone do
+        dostępu programowego), z limitem tempa, retry i ograniczeniem do domeny API."""
+        if not host_allowed(url, domains):
+            raise DomainNotAllowed(url, f"Domena API spoza listy {domains}")
+        resp = self._raw_request(method, url, host_of(url), **kwargs)
+        if resp.status_code in (401, 403):
+            resp.close()
+            raise LoginRequired(url, f"API odrzuciło dane logowania (HTTP {resp.status_code}) – sprawdź klucz API",
+                                resp.status_code)
+        if resp.status_code >= 400:
+            body = resp.text[:200]
+            resp.close()
+            raise FetchError(url, f"HTTP {resp.status_code}: {body}", resp.status_code)
+        return resp

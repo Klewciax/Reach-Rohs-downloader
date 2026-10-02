@@ -142,7 +142,19 @@ def live_checks(settings: Settings, only: set[str] | None = None, parts_file: Pa
     session = PoliteSession(settings)
     checks: list[Check] = []
     with tempfile.TemporaryDirectory() as tmp:
-        pipeline = Pipeline(settings, Path(tmp), session)
+        pipeline = Pipeline(settings, Path(tmp), session, registry=reg)
+        # API dystrybutorów (jeśli podano klucze)
+        for missing in pipeline.hub.missing_keys:
+            checks.append(Check(WARN, "dystrybutor", f"pominięty – brak klucza API: {missing}"))
+        for client in pipeline.hub.clients:
+            try:
+                parts = client.lookup("LM358DR")
+                checks.append(Check(OK if parts else WARN, "dystrybutor",
+                                    f"{client.name}: API odpowiada, wyników dla LM358DR: {len(parts)}"))
+            except LoginRequired as exc:
+                checks.append(Check(BROKEN, "dystrybutor", f"{client.name}: klucz API odrzucony – {exc}"))
+            except FetchError as exc:
+                checks.append(Check(NET if exc.status is None else WARN, "dystrybutor", f"{client.name}: {exc}"))
         for key, m in reg.manufacturers.items():
             if only and key not in only:
                 continue

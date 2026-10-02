@@ -35,6 +35,19 @@ def folders_for(types: set[DocType]) -> list[DocType]:
     return main or ([DocType.MCD] if DocType.MCD in types else [DocType.MCD])
 
 
+def issuer_of(text: str, item: BomItem) -> str:
+    """Czy w treści dokumentu występuje nazwa producenta (lub alias) – tj. czy to dokument producenta."""
+    from .manufacturers import normalize_name, strip_legal
+
+    hay = " " + normalize_name(text[:20000]) + " "
+    m = item.manufacturer
+    names = [m.name, *m.aliases, item.manufacturer_raw] if m else [item.manufacturer_raw]
+    for n in sorted({strip_legal(normalize_name(x)) for x in names if x}, key=len, reverse=True):
+        if len(n) >= 3 and f" {n} " in hay:
+            return n
+    return ""
+
+
 class NotADocument(Exception):
     """Odpowiedź nie jest dokumentem (np. strona błędu HTML zamiast PDF)."""
 
@@ -112,7 +125,7 @@ class Downloader:
     def download(self, cand: Candidate, item: BomItem) -> DownloadedDoc:
         """Pobiera kandydata, klasyfikuje go względem pozycji BoM i zapisuje na dysk."""
         assert item.manufacturer is not None
-        fetched = self._fetch(cand, item.manufacturer.domains)
+        fetched = self._fetch(cand, list(item.manufacturer.domains) + list(cand.extra_domains))
         notes = [cand.note] if cand.note else []
 
         text = fetched.text
@@ -138,21 +151,33 @@ class Downloader:
             scope, mpn_verified = Scope.FAMILY, "no"
             notes.append("MPN w BoM jest skrótem/wzorcem – dokument nie potwierdza konkretnego wariantu zamówieniowego")
 
-        saved = self._save(fetched, item, types, scope)
+        issuer = ""
+        if cand.source:
+            issuer = issuer_of(text, item)
+            if not issuer and scope != Scope.GENERAL:
+                scope, mpn_verified = Scope.GENERAL, "no"
+                notes.append(f"plik od {cand.source}: w treści nie ma nazwy producenta – prawdopodobnie oświadczenie "
+                             "dystrybutora, nie zastępuje deklaracji producenta")
+            elif issuer:
+                notes.append(f"kopia dokumentu producenta udostępniona przez {cand.source}")
+
+        saved = self._save(fetched, item, types, scope, cand.source)
         path = next(iter(saved.values()))
         return DownloadedDoc(
             url=cand.url, final_url=fetched.final_url, path=str(path), sha256=fetched.sha256,
-            paths={t: str(p) for t, p in saved.items()},
+            paths={t: str(p) for t, p in saved.items()}, source=cand.source, issuer=issuer,
             downloaded_at=fetched.when, content_type=fetched.kind, doc_types=types, scope=scope,
             mpn_verified=mpn_verified, title=cand.title, note="; ".join(notes),
             shared=scope != Scope.PART,
         )
 
-    def _save(self, fetched: _Fetched, item: BomItem, types: set[DocType], scope: Scope) -> dict[DocType, Path]:
+    def _save(self, fetched: _Fetched, item: BomItem, types: set[DocType], scope: Scope,
+              source: str = "") -> dict[DocType, Path]:
         """Zapisuje plik w folderze każdego rodzaju, którego dotyczy (RoHS / REACH / ...).
         Ten sam plik (URL) jest zapisywany w danym folderze tylko raz."""
         mfr = safe_name(item.manufacturer_name)
         ext = fetched.kind if fetched.kind != "bin" else "dat"
+        src = f"__z_{safe_name(source, 20)}" if source else ""
         out: dict[DocType, Path] = {}
         for t in folders_for(types):
             if t in fetched.saved:
@@ -161,11 +186,11 @@ class Downloader:
             base = self.docs_dir / TYPE_FOLDERS[t] / mfr
             if scope == Scope.PART:
                 folder = base / safe_name(item.mpn)
-                name = f"{safe_name(item.mpn)}__{mfr}__{_types_label(types)}__{fetched.sha256[:8]}.{ext}"
+                name = f"{safe_name(item.mpn)}__{mfr}__{_types_label(types)}{src}__{fetched.sha256[:8]}.{ext}"
             else:
                 folder = base / SHARED_SUBFOLDER
                 orig = safe_name(Path(unquote(urlsplit(fetched.final_url).path)).stem or "document", 50)
-                name = f"{mfr}__{_types_label(types)}__{scope.value}__{orig}__{fetched.sha256[:8]}.{ext}"
+                name = f"{mfr}__{_types_label(types)}__{scope.value}{src}__{orig}__{fetched.sha256[:8]}.{ext}"
             folder.mkdir(parents=True, exist_ok=True)
             path = folder / name
             path.write_bytes(fetched.data)
@@ -180,6 +205,7 @@ class Downloader:
                 "first_requested_for_mpn": item.mpn,
                 "doc_types": sorted(x.value for x in types),
                 "scope": scope.value,
+                "source": source or "strona producenta",
             }
             path.with_name(path.name + ".source.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False),
                                                                   encoding="utf-8")

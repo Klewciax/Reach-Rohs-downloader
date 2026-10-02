@@ -68,6 +68,8 @@ def find_contacts(manufacturer: ManufacturerInfo, ctx: AdapterContext) -> Contac
     info = ContactInfo()
     helper = BaseAdapter()
     pages = list(dict.fromkeys(manufacturer.contact_pages + manufacturer.compliance_pages))
+    if not pages and manufacturer.domains:  # np. producent wykryty automatycznie – strona główna
+        pages = [f"https://www.{manufacturer.domains[0]}/"]
     for url in pages:
         scratch = SearchResult()
         page = helper.fetch_html(url, ctx, scratch)

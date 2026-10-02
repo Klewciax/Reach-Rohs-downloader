@@ -1,10 +1,16 @@
 # bom-compliance – pobieranie deklaracji RoHS / REACH z oficjalnych stron producentów
 
-Narzędzie CLI, które czyta BoM (CSV/XLSX) i dla każdej pary **MPN + Manufacturer** pobiera
-deklaracje RoHS i REACH (certyfikaty, oświadczenia, deklaracje materiałowe) **wyłącznie
-z domen należących do producenta**. Na koniec generuje raport (CSV + XLSX + konsola), listę
-„Do uzyskania mailowo” z kontaktami znalezionymi na stronach producentów oraz gotowe
-szablony e-maili po angielsku.
+Narzędzie CLI, które czyta BoM (CSV/XLSX/XLS) i dla każdej pary **MPN + Manufacturer** pobiera
+deklaracje RoHS i REACH (certyfikaty, oświadczenia, deklaracje materiałowe), status cyklu życia
+i deklaracje długości produkcji.
+
+- **Źródło podstawowe** to strona producenta.
+- **Źródło zapasowe** to API zaufanych dystrybutorów (Octopart/Nexar, DigiKey, Mouser, TME), używane
+  tylko wtedy, gdy u producenta nie ma dokumentu. W raporcie zawsze widać, skąd pochodzi plik.
+- Producenci spoza rejestru są wykrywani automatycznie, bez ręcznej konfiguracji.
+
+Na koniec narzędzie generuje raport Excel z osobnymi kartami, listę „Do uzyskania mailowo”
+z kontaktami i gotowe szablony e-maili po angielsku.
 
 ## Dlaczego Python
 
@@ -192,6 +198,8 @@ Najważniejsze opcje (pełna lista: `--help`):
 | `--sheet` | arkusz Excela: nazwa, numer (od 1) albo `all`; domyślnie arkusz z największą liczbą wierszy BoM |
 | `--no-alternates` | pomiń zamienniki (Manufacturer 2 / MPN 2 itp.) |
 | `--no-mpn-check` | nie sprawdzaj na stronie producenta, czy MPN jest pełny czy skrócony |
+| `--manufacturer-only` | tylko strony producentów, bez zapasowego źródła u dystrybutorów |
+| `--no-discovery` | nie wykrywaj automatycznie stron producentów spoza rejestru |
 | `--delay`, `--timeout`, `--retries` | tempo zapytań na host, timeout odczytu, liczba ponowień |
 | `--no-general` | nie pobieraj ogólnych oświadczeń producentów |
 | `--no-contacts` | nie szukaj kontaktów do listy „Do uzyskania mailowo” |
@@ -320,16 +328,85 @@ dla MPN), raport pokazuje „NIE” i link do polityki. Pozycja trafia wtedy na 
 mailowo”, a szablon e-maila zawiera prośbę o status cyklu życia i deklarację longevity (do kiedy
 produkcja, polityka powiadomień EOL).
 
-## Gwarancja pochodzenia plików
+## Źródła plików i ich wiarygodność
 
-- Każdy producent ma w rejestrze listę **oficjalnych domen**. Każde zapytanie, łącznie
-  z **każdym krokiem przekierowania**, jest sprawdzane: przekierowanie do dystrybutora albo
-  agregatora jest odrzucane, zanim cokolwiek zostanie pobrane.
-- Linki do domen innych niż domeny producenta są ignorowane już na etapie wyszukiwania.
-- Producent spoza rejestru dostaje status `NIEZNANY PRODUCENT` i nic nie jest pobierane. Narzędzie
-  nie szuka plików w wyszukiwarkach internetowych, bo nie dałoby się wtedy zagwarantować źródła.
-- Do każdego pliku zapisywany jest sidecar `.source.json` (URL źródłowy, URL końcowy, data
-  pobrania w UTC, SHA-256), a te same dane trafiają do arkusza „Pliki”.
+Kolejność źródeł dla każdej pozycji BoM:
+
+1. **Strona producenta** (adapter producenta lub mechanizm generyczny). Pobieranie jest ograniczone
+   do oficjalnych domen producenta, także przy każdym przekierowaniu.
+2. **Forma MPN bez sufiksu opakowania** (np. `#PBF`, `,215`) na stronie producenta. Wynik jest
+   oznaczany jako dokument zbiorczy.
+3. **Dystrybutorzy (zapasowe źródło, przez oficjalne API).** Używani tylko, gdy kroki 1–2 nie dały
+   dokumentu RoHS **i** REACH dla konkretnego MPN:
+   - brana jest tylko oferta, w której **MPN zgadza się dokładnie, a producent to ten sam producent**
+     co w BoM. Ten sam MPN innego producenta jest odrzucany;
+   - pobierane są dokumenty środowiskowe (RoHS, REACH, SVHC, deklaracje, certyfikaty), a nie karty
+     katalogowe. Pliki pochodzą tylko z domen danego dystrybutora albo producenta;
+   - jeśli w treści pliku od dystrybutora jest nazwa producenta, to jest to kopia dokumentu
+     producenta i liczy się normalnie. Jeśli nazwy producenta nie ma (np. własne oświadczenie
+     dystrybutora), plik jest zapisywany jako „ogólne oświadczenie” i **nie** liczy się jako
+     deklaracja dla MPN;
+   - kolumna **„Źródło pliku”** na kartach RoHS/REACH pokazuje „strona producenta” albo
+     „DigiKey (dystrybutor) – kopia dokumentu producenta”. Nazwa pliku od dystrybutora zawiera
+     `__z_<Dystrybutor>`;
+   - statusy podawane przez dystrybutorów (np. DigiKey „ROHS3 Compliant”, „REACH Unaffected”,
+     Mouser „LifecycleStatus”) są w kolumnie „Status wg dystrybutorów (informacyjnie)”. To dane
+     pomocnicze, a nie deklaracja.
+
+Wyłączenie dystrybutorów: `--manufacturer-only` albo `distributor_fallback: false`.
+
+### Klucze API dystrybutorów
+
+Strony WWW DigiKey, Mouser, Octopart i TME blokują automaty, a ich regulaminy zabraniają scrapingu,
+dlatego narzędzie używa wyłącznie ich oficjalnych API. Klucze są bezpłatne po rejestracji konta
+deweloperskiego (limity zapytań zależą od planu). Podaj je w zmiennych środowiskowych:
+
+| źródło | zmienne środowiskowe | co daje |
+|---|---|---|
+| Nexar / Octopart | `NEXAR_CLIENT_ID`, `NEXAR_CLIENT_SECRET` | dokumenty (w tym zgodności), **strona producenta** (pomaga wykryć nieznanych producentów) |
+| DigiKey (API v4) | `DIGIKEY_CLIENT_ID`, `DIGIKEY_CLIENT_SECRET` | dokumenty z sekcji „Environmental Information”, status RoHS / REACH, status produktu |
+| Mouser (Search API) | `MOUSER_API_KEY` | status RoHS, status cyklu życia, link do karty katalogowej (Mouser API nie udostępnia dokumentów zgodności) |
+| TME | `TME_TOKEN`, `TME_APP_SECRET` | dokumenty produktu (w tym deklaracje), producent |
+
+```bash
+export DIGIKEY_CLIENT_ID=...  DIGIKEY_CLIENT_SECRET=...
+export MOUSER_API_KEY=...
+python -m bom_compliance bom.xlsx -o output
+```
+
+Bez klucza dane źródło jest pomijane, a konsola wypisuje, których kluczy brakuje. Klucze można też
+wpisać do `api_keys:` w pliku konfiguracyjnym, ale **nie commituj takiego pliku**.
+`python -m bom_compliance.smoke --live` sprawdza, czy klucze działają.
+
+## Producenci spoza rejestru: wykrywanie automatyczne
+
+Nie trzeba niczego dopisywać ręcznie. Dla producenta, którego nie ma w `manufacturers.yaml`,
+narzędzie samo wykrywa jego oficjalną stronę:
+
+1. Zbiera kandydatów na domenę:
+   - stronę producenta z Nexar/Octopart;
+   - domenę karty katalogowej z API dystrybutorów (z pominięciem domen dystrybutorów i hostingów);
+   - domeny utworzone z nazwy, np. „Acme Connectors Ltd” → `acmeconnectors.com`, `acme.com`, … (do
+     10 prób).
+2. **Weryfikuje każdego kandydata.** Pobiera stronę główną (z poszanowaniem robots.txt) i sprawdza,
+   czy tytuł, nazwa witryny albo początek treści zawiera nazwę producenta. Np. „domena na sprzedaż”
+   albo strona innej firmy zostaje odrzucona.
+3. Na zweryfikowanej domenie działa mechanizm generyczny: przechodzi od strony głównej po stronach
+   o środowisku, jakości i zgodności i szuka dokumentów RoHS/REACH.
+4. Wynik zapisuje do `config/discovered_manufacturers.yaml` (kopia w katalogu wyników), więc kolejne
+   uruchomienia korzystają z niego od razu. W raporcie taki producent ma „Dopasowanie producenta =
+   auto” i uwagę „strona wykryta automatycznie: domena (metoda; potwierdzenie) – zweryfikuj”.
+5. Jeśli domeny nie da się zweryfikować, a są klucze API, narzędzie sprawdza dystrybutorów (para
+   MPN + nazwa producenta z BoM). Bez tego pozycja dostaje status „NIEZNANY PRODUCENT” i trafia na
+   listę mailową.
+
+Wyłączenie: `--no-discovery`. Automatycznie wykryty producent nie ma dedykowanego adaptera, więc
+skuteczność zależy od tego, czy jego strona ma statyczne linki do dokumentów.
+
+## Pozostałe gwarancje
+
+- Do każdego pliku zapisywany jest sidecar `.source.json` (URL źródłowy, URL końcowy, źródło:
+  producent albo dystrybutor, data pobrania w UTC, SHA-256). Te same dane trafiają do karty „Pliki”.
 - Raport nie zawiera wymyślonych adresów e-mail. Adres trafia do raportu tylko wtedy, gdy znaleziono
   go na pobranej stronie producenta i należy do jego domeny (podawana jest strona źródłowa). W każdym
   innym przypadku raport pokazuje „DO RĘCZNEJ WERYFIKACJI”.
@@ -364,7 +441,11 @@ z oficjalnych domen producentów (stan na 2026-10). Serwisy producentów się zm
 URL jest weryfikowany przy uruchomieniu (kod HTTP, typ treści, domena). Jeśli producent zmieni
 serwis, raport pokaże NIE ZNALEZIONO / BŁĄD oraz stronę do ręcznego sprawdzenia, a nie błędny plik.
 
-## Dodawanie producenta
+## Dodawanie producenta (opcjonalne)
+
+Nie jest wymagane, bo producenci spoza rejestru są wykrywani automatycznie. Wpis w rejestrze
+(albo dedykowany adapter) daje jednak lepsze wyniki: podaje strony compliance, wzorce URL,
+strony produktu i listy longevity, więc skrypt nie musi zgadywać.
 
 **1. Tylko konfiguracja (mechanizm generyczny).** W wielu przypadkach to wystarczy. Dopisz wpis
 do `config/manufacturers.yaml`:

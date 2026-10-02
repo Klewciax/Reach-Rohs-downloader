@@ -102,6 +102,17 @@ IDENT_W = {"Lp": 6, "MPN": 26, "Producent": 22, "Producent (zapis w BoM)": 22, "
            "Zamiennik": 10}
 
 
+def source_label(d) -> str:
+    if not d.source:
+        return "strona producenta"
+    return f"{d.source} (dystrybutor) – " + ("kopia dokumentu producenta" if d.issuer else "wystawca nieustalony")
+
+
+def distributor_status(r: ItemResult, field: str) -> str:
+    vals = [f"{p.source}: {getattr(p, field)}" for p in r.distributor_parts if getattr(p, field)]
+    return "\n".join(dict.fromkeys(vals))
+
+
 def _compliance_rows(results: list[ItemResult], t: DocType, status_pl: dict) -> list[list]:
     rows = []
     for n, r in enumerate(results, 1):
@@ -118,6 +129,8 @@ def _compliance_rows(results: list[ItemResult], t: DocType, status_pl: dict) -> 
             *_ident(n, r),
             Link(status_pl[status], main.path_for(t) if main else None, _status_fill(status)),
             SCOPE_PL[main.scope] if main else "",
+            source_label(main) if main else "",
+            distributor_status(r, "rohs_status" if t == DocType.ROHS else "reach_status"),
             Link(Path(main.path_for(t)).name, main.path_for(t)) if main else "",
             "\n".join(Path(d.path_for(t)).name for d in others),
             main.downloaded_at if main else "",
@@ -129,10 +142,12 @@ def _compliance_rows(results: list[ItemResult], t: DocType, status_pl: dict) -> 
     return rows
 
 
-COMPLIANCE_HEADER = IDENT + ["Status", "Zakres dokumentu", "Plik w folderze", "Pozostałe pliki",
+COMPLIANCE_HEADER = IDENT + ["Status", "Zakres dokumentu", "Źródło pliku", "Status wg dystrybutorów (informacyjnie)",
+                             "Plik w folderze", "Pozostałe pliki",
                              "Data pobrania (UTC)", "Źródło – strona producenta (tekst)", "MPN potwierdzony w treści",
                              "Powód niepowodzenia / uwagi", "Do ręcznej weryfikacji (oficjalne strony)"]
-COMPLIANCE_W = {**IDENT_W, "Status": 30, "Zakres dokumentu": 18, "Plik w folderze": 45, "Pozostałe pliki": 40,
+COMPLIANCE_W = {**IDENT_W, "Status": 30, "Zakres dokumentu": 18, "Źródło pliku": 30,
+                "Status wg dystrybutorów (informacyjnie)": 28, "Plik w folderze": 45, "Pozostałe pliki": 40,
                 "Data pobrania (UTC)": 20, "Źródło – strona producenta (tekst)": 55,
                 "MPN potwierdzony w treści": 12, "Powód niepowodzenia / uwagi": 60,
                 "Do ręcznej weryfikacji (oficjalne strony)": 50}
@@ -140,10 +155,12 @@ COMPLIANCE_W = {**IDENT_W, "Status": 30, "Zakres dokumentu": 18, "Plik w folderz
 LC_FILL = {LifecycleStatus.ACTIVE: GREEN, LifecycleStatus.MATURE: YELLOW, LifecycleStatus.PREVIEW: YELLOW,
            LifecycleStatus.NRND: ORANGE, LifecycleStatus.LAST_TIME_BUY: RED, LifecycleStatus.OBSOLETE: RED,
            LifecycleStatus.UNKNOWN: GREY}
-LIFECYCLE_HEADER = IDENT + ["Status", "Etykieta producenta (dosłownie)", "Zakres statusu", "Sprawdzono (UTC)",
+LIFECYCLE_HEADER = IDENT + ["Status", "Etykieta producenta (dosłownie)", "Zakres statusu",
+                            "Status wg dystrybutorów (informacyjnie)", "Sprawdzono (UTC)",
                             "Kopia strony w folderze", "Źródło – strona producenta (tekst)",
                             "Dowód (fragment strony)", "Uwagi"]
 LIFECYCLE_W = {**IDENT_W, "Status": 30, "Etykieta producenta (dosłownie)": 28, "Zakres statusu": 20,
+               "Status wg dystrybutorów (informacyjnie)": 28,
                "Sprawdzono (UTC)": 20, "Kopia strony w folderze": 40, "Źródło – strona producenta (tekst)": 50,
                "Dowód (fragment strony)": 60, "Uwagi": 50}
 
@@ -153,13 +170,14 @@ def _lifecycle_rows(results: list[ItemResult], lifecycle_pl: dict) -> list[list]
     for n, r in enumerate(results, 1):
         lc = r.lifecycle
         if lc is None:
-            rows.append([*_ident(n, r), Link("NIE SPRAWDZANO", None, GREY)] + [""] * 7)
+            rows.append([*_ident(n, r), Link("NIE SPRAWDZANO", None, GREY), "", "",
+                         distributor_status(r, "lifecycle_status")] + [""] * 5)
             continue
         scope = {"part": "dla MPN", "page": "strona produktu / rodziny"}.get(lc.scope, "")
         rows.append([
             *_ident(n, r),
             Link(lifecycle_pl[lc.status], lc.snapshot or None, LC_FILL[lc.status]),
-            lc.label, scope, lc.checked_at,
+            lc.label, scope, distributor_status(r, "lifecycle_status"), lc.checked_at,
             Link(Path(lc.snapshot).name, lc.snapshot) if lc.snapshot else "",
             lc.source_url, lc.evidence, lc.note,
         ])
@@ -249,7 +267,8 @@ def write_workbook(path: Path, out_dir: Path, results: list[ItemResult], summary
             cell.hyperlink = w.rel(str(target))
             cell.font = w.link_font
     ws.append([])
-    ws.append(["Zasady", "Wszystkie pliki pochodzą wyłącznie z oficjalnych domen producentów. Kolumna 'Status' "
+    ws.append(["Zasady", "Pliki pochodzą ze stron producentów; gdy tam ich brak – z API zaufanych dystrybutorów "
+                         "(Octopart/Nexar, DigiKey, Mouser, TME), co pokazuje kolumna 'Źródło pliku'. Kolumna 'Status' "
                          "na kartach RoHS / REACH / Status cyklu życia / Długość produkcji jest linkiem do pliku "
                          "w folderze 'documents' (link względny – przenoś cały folder raportu). Adres strony "
                          "producenta podany jest jako tekst w kolumnie 'Źródło'."])

@@ -57,6 +57,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Długość produkcji / programy longevity producenta – domyślnie włączone")
     p.add_argument("--no-lifecycle", action="store_true", help="Nie sprawdzaj statusu cyklu życia")
     p.add_argument("--no-longevity", action="store_true", help="Nie sprawdzaj długości produkcji (longevity)")
+    p.add_argument("--manufacturer-only", action="store_true",
+                   help="Tylko strony producentów – bez zapasowego źródła u dystrybutorów (Octopart/DigiKey/Mouser/TME)")
+    p.add_argument("--no-discovery", action="store_true",
+                   help="Nie wykrywaj automatycznie stron producentów spoza rejestru")
     p.add_argument("--dry-run", action="store_true", help="Tylko wczytaj i zdeduplikuj BoM, bez zapytań sieciowych")
     p.add_argument("-v", "--verbose", action="count", default=0, help="Więcej logów (-v, -vv)")
     return p
@@ -75,6 +79,8 @@ def main(argv: list[str] | None = None) -> int:
         "max_retries": args.retries, "download_general_statements": False if args.no_general else None,
         "check_lifecycle": False if args.no_lifecycle else (True if args.lifecycle else None),
         "include_alternates": False if args.no_alternates else None,
+        "distributor_fallback": False if args.manufacturer_only else None,
+        "auto_discover_manufacturers": False if args.no_discovery else None,
         "inspect_mpn": False if args.no_mpn_check else None,
         "check_longevity": False if args.no_longevity else (True if args.longevity else None),
     }
@@ -101,6 +107,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         registry = ManufacturerRegistry.from_yaml(settings.manufacturers_file, settings.fuzzy_manufacturer_match,
                                                   settings.fuzzy_cutoff)
+        if settings.auto_discover_manufacturers:
+            n_disc = registry.merge_yaml(settings.discovered_manufacturers_file)
+            if n_disc:
+                log.info("Wczytano %d producentów wykrytych automatycznie wcześniej (%s)", n_disc,
+                         settings.discovered_manufacturers_file)
         rows, invalid, meta = read_bom(args.bom, settings.columns, settings.sheet, registry,
                                        settings.include_alternates)
     except (OSError, ValueError) as exc:
@@ -143,7 +154,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  ✗ wiersz {r.row_number}: {r.reason}")
         return 0
 
-    pipeline = Pipeline(settings, out_dir)
+    pipeline = Pipeline(settings, out_dir, registry=registry)
+    if settings.distributor_fallback or settings.auto_discover_manufacturers:
+        if pipeline.hub.active:
+            print("Dystrybutorzy (zapasowe źródło, API): " + ", ".join(c.name for c in pipeline.hub.clients))
+        if pipeline.hub.missing_keys:
+            print("Dystrybutorzy pominięci – brak kluczy API: " + "; ".join(pipeline.hub.missing_keys))
 
     def progress(n, total, res):
         shown = res.item.mpn_bom if res.item.mpn_bom == res.item.mpn else f"{res.item.mpn_bom} -> {res.item.mpn}"
@@ -155,6 +171,10 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("Przerwano.", file=sys.stderr)
         return 130
+
+    pipeline.discovery.save(out_dir / "discovered_manufacturers.yaml")
+    for name, err in pipeline.hub.errors.items():
+        print(f"UWAGA: {name}: {err}", file=sys.stderr)
 
     contacts = {}
     if not args.no_contacts:

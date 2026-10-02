@@ -46,6 +46,7 @@ class ManufacturerInfo:
     product_pages: list[str] = field(default_factory=list)  # szablony stron produktu ({mpn}, {base})
     longevity_pages: list[str] = field(default_factory=list)  # strony / listy programu longevity
     longevity_documents: list[dict] = field(default_factory=list)  # polityki EOL / longevity (PDF)
+    auto_discovered: dict = field(default_factory=dict)  # metoda / dowód, jeśli wykryty automatycznie
 
 
 @dataclass
@@ -107,6 +108,8 @@ class Candidate:
     allow_html: bool = False  # czy strona HTML sama w sobie jest dokumentem
     note: str = ""
     fixed_types: bool = False  # nie klasyfikuj rodzaju z treści (np. polityka longevity)
+    source: str = ""           # "" = strona producenta; inaczej nazwa dystrybutora (DigiKey, TME, …)
+    extra_domains: list[str] = field(default_factory=list)  # dodatkowe dozwolone domeny (dystrybutor)
 
 
 @dataclass
@@ -139,6 +142,8 @@ class DownloadedDoc:
     note: str = ""
     shared: bool = False  # ten sam plik użyty dla wielu pozycji BoM
     paths: dict = field(default_factory=dict)  # DocType -> ścieżka kopii w folderze danego rodzaju
+    source: str = ""           # "" = strona producenta; inaczej dystrybutor
+    issuer: str = ""           # kto wystawił dokument (dla plików od dystrybutora)
 
     def path_for(self, doc_type: "DocType") -> str:
         return self.paths.get(doc_type, self.path)
@@ -193,6 +198,7 @@ class ItemResult:
     notes: list[str] = field(default_factory=list)
     lifecycle: LifecycleInfo | None = None
     longevity: LongevityInfo | None = None
+    distributor_parts: list = field(default_factory=list)  # distributors.DistributorPart (dopasowane MPN+producent)
 
     def docs_for(self, doc_type: DocType) -> list[DownloadedDoc]:
         order = {Scope.PART: 0, Scope.FAMILY: 1, Scope.GENERAL: 2}

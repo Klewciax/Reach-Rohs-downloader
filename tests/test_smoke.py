@@ -68,7 +68,8 @@ def test_example_bom_full_run_all_options_offline(tmp_path):
     """Cały przebieg na przykładowym BoM, gdy żadna strona producenta nie odpowiada sensownie (404)."""
     responses.get(re.compile(r"https?://.*"), status=404)
     cfg = tmp_path / "cfg.yaml"
-    cfg.write_text("min_delay_per_host: 0\ndelay_jitter: 0\nbackoff_base: 0\nmax_retries: 0\n")
+    cfg.write_text("min_delay_per_host: 0\ndelay_jitter: 0\nbackoff_base: 0\nmax_retries: 0\n"
+                   "auto_discover_manufacturers: false\n")
     out = tmp_path / "out"
     rc = main([str(ROOT / "examples" / "bom_example.csv"), "-o", str(out), "-c", str(cfg),
                "--lifecycle", "--longevity"])

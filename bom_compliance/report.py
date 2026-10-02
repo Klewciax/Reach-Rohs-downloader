@@ -11,7 +11,7 @@ from pathlib import Path
 from .config import Settings
 from .contacts import ContactInfo
 from .downloader import safe_name
-from .models import DocType, InvalidRow, ItemResult, LifecycleStatus, Status
+from .models import DocType, InvalidRow, ItemResult, LifecycleStatus, Scope, Status
 from .pipeline import is_success
 
 log = logging.getLogger(__name__)
@@ -83,6 +83,10 @@ def summarize(results: list[ItemResult], settings: Settings, meta: dict, invalid
     s.extra["MPN-wzorce rodzin (xxx, *)"] = sum(1 for r in results if r.item.wildcard)
     s.extra["MPN nieznalezione na stronie producenta"] = sum(1 for f in checks if f.startswith("nie znaleziono"))
     s.extra["Pozycje będące wyłącznie zamiennikami (2. źródło)"] = sum(1 for r in results if r.item.alternate)
+    s.extra["Producenci spoza rejestru wykryci automatycznie (pozycje)"] = sum(
+        1 for r in results if r.item.match_method == "auto")
+    s.extra["Pozycje z plikiem RoHS/REACH od dystrybutora"] = sum(
+        1 for r in results if any(d.source and d.scope != Scope.GENERAL for d in r.docs))
     if settings.check_lifecycle:
         for st in LifecycleStatus:
             n = sum(1 for r in results if r.lifecycle and r.lifecycle.status == st)
