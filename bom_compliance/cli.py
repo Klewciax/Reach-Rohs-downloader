@@ -164,8 +164,7 @@ def main(argv: list[str] | None = None) -> int:
         if pipeline.hub.missing_keys:
             print("Dystrybutorzy pominięci – brak kluczy API: " + "; ".join(pipeline.hub.missing_keys))
             if not Path(settings.credentials_file).is_file():
-                print("  Aby ich użyć: python -m bom_compliance.credentials init  (i wpisz klucze w "
-                      "config/credentials.yaml)")
+                print("  Aby ich użyć, uruchom kreator: python -m bom_compliance.credentials")
 
     def progress(n, total, res):
         shown = res.item.mpn_bom if res.item.mpn_bom == res.item.mpn else f"{res.item.mpn_bom} -> {res.item.mpn}"

@@ -41,7 +41,7 @@ python -m pytest -m smoke     # tylko smoke testy
 
 ```bash
 pip install -r requirements.txt
-python -m bom_compliance.credentials init      # opcjonalnie: klucze API dystrybutorów (DigiKey, Octopart…)
+python -m bom_compliance.credentials           # opcjonalnie: kreator kluczy API (DigiKey, Octopart…)
 python -m bom_compliance twoj_bom.xlsx --dry-run   # podgląd: arkusze, kolumny, MPN
 python -m bom_compliance twoj_bom.xlsx -o output   # wynik: output/report.xlsx + output/documents/
 ```
@@ -370,10 +370,33 @@ Strony WWW DigiKey, Mouser, Octopart i TME blokują automaty, a ich regulaminy z
 dlatego narzędzie używa wyłącznie ich oficjalnych API. Konta deweloperskie są bezpłatne.
 
 ```bash
-python -m bom_compliance.credentials init            # tworzy config/credentials.yaml ze wzoru (chmod 600)
-#   … wpisz klucze w config/credentials.yaml …
+python -m bom_compliance.credentials                 # KREATOR: wybierz serwisy z listy i wpisz klucze
 python -m bom_compliance.credentials status --check  # pokazuje ustawione klucze (zamaskowane) i testuje API
+python -m bom_compliance.credentials remove digikey  # usuwa klucze wybranego serwisu
 ```
+
+Kreator działa tak:
+
+```
+  1. DigiKey           ★★★ zalecane    [brak kluczy]
+  2. Nexar / Octopart  ★★★ zalecane    [brak kluczy]
+  3. Mouser            ★ pomocniczo    [brak kluczy]
+  4. TME               eksperymentalne [brak kluczy]
+Do których serwisów chcesz mieć dostęp? Podaj numery, np. 1,2 ('all' = wszystkie, Enter = zakończ): 1,2
+=== DigiKey ===
+  • Wejdź na https://developer.digikey.com/ …          ← instrukcja zdobycia klucza
+  Client ID:                                            ← wpisywane znaki są ukryte
+  Client Secret:
+…
+Sprawdzić teraz klucze zapytaniem do API? [T/n]:
+```
+
+- Każdy wybrany serwis wyświetla krótką instrukcję, skąd wziąć klucz.
+- Wpisywane klucze są niewidoczne. Przy ponownym uruchomieniu Enter zostawia obecną wartość,
+  a `-` ją usuwa.
+- Kreator zapisuje `config/credentials.yaml` z prawami tylko dla właściciela i od razu może
+  przetestować klucze.
+- Ręczna edycja też działa: `python -m bom_compliance.credentials init` tworzy pusty plik ze wzoru.
 
 Plik `config/credentials.yaml` jest w `.gitignore`, więc nie trafi do repozytorium. Wzór z instrukcją
 rejestracji przy każdym serwisie: [`config/credentials.example.yaml`](config/credentials.example.yaml).
