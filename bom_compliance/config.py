@@ -54,8 +54,9 @@ class Settings:
     include_alternates: bool = True      # uwzględnij zamienniki (kolumny "Manufacturer 2 / MPN 2")
 
     # Opcje dodatkowe: cykl życia i longevity
-    check_lifecycle: bool = False      # status Active / NRND / EOL ze strony producenta
-    check_longevity: bool = False      # program longevity / deklaracja długości produkcji
+    check_lifecycle: bool = True       # status Active / NRND / EOL ze strony producenta
+    check_longevity: bool = True       # program longevity / deklaracja długości produkcji
+    request_longevity_by_email: bool = True  # brak deklaracji longevity -> pozycja na liście mailowej
     save_lifecycle_snapshots: bool = True  # zapisuj kopię strony, z której odczytano status
     download_longevity_documents: bool = True  # pobieraj polityki EOL / longevity producenta
 

@@ -112,10 +112,15 @@ def test_full_run(tmp_path):
     # Plik + metadane źródła
     pdf = Path(rows["NDS331N"]["Plik RoHS"])
     assert pdf.is_file() and pdf.parent.name == "NDS331N" and pdf.name.startswith("NDS331N__onsemi__RoHS-REACH")
+    # Osobne foldery wg rodzaju: certyfikat RoHS+REACH jest w obu
+    assert pdf.parent.parent.parent.name == "RoHS"
+    reach_pdf = Path(rows["NDS331N"]["Plik REACH"])
+    assert reach_pdf.is_file() and reach_pdf.parent.parent.parent.name == "REACH" and reach_pdf.name == pdf.name
     meta = json.loads(pdf.with_name(pdf.name + ".source.json").read_text())
     assert meta["source_url"] == ONSEMI_COC and meta["downloaded_at_utc"]
-    ti_general = [p for p in (out / "documents" / "Texas_Instruments" / "_shared").iterdir() if p.suffix == ".pdf"]
-    assert len(ti_general) == 2
+    ti_rohs = list((out / "documents" / "RoHS" / "Texas_Instruments" / "_ogolne_i_zbiorcze").glob("*.pdf"))
+    ti_reach = list((out / "documents" / "REACH" / "Texas_Instruments" / "_ogolne_i_zbiorcze").glob("*.pdf"))
+    assert len(ti_rohs) == 1 and len(ti_reach) == 1
 
     # Lista "do uzyskania mailowo": pogrupowana per producent, e-mail tylko z domeny producenta
     req = list(csv.DictReader(open(out / "report_to_request.csv", encoding="utf-8-sig"), delimiter=";"))
@@ -123,7 +128,9 @@ def test_full_run(tmp_path):
     for r in req:
         by_mfr.setdefault(r["Producent"], []).append(r)
     assert {r["MPN"] for r in by_mfr["Texas Instruments"]} == {"LM358DR", "TLV70033DDCR"}
-    assert "NDS331N" not in {r["MPN"] for r in req}
+    # NDS331N ma RoHS i REACH – na liście mailowej jest tylko z powodu braku deklaracji longevity
+    nds = [r for r in req if r["MPN"] == "NDS331N"]
+    assert nds and "RoHS" not in nds[0]["Do uzyskania"] and "Longevity" in nds[0]["Do uzyskania"]
     assert "env-compliance@vishay.com" in by_mfr["Vishay"][0]["Kontakt (oficjalna strona producenta)"]
     assert "gmail" not in by_mfr["Vishay"][0]["Kontakt (oficjalna strona producenta)"]
     assert "DO RĘCZNEJ WERYFIKACJI" in by_mfr["Acme Connectors Ltd"][0]["Kontakt (oficjalna strona producenta)"]
@@ -131,8 +138,28 @@ def test_full_run(tmp_path):
     assert "LM358DR" in tpl and "TLV70033DDCR" in tpl and "SVHC" in tpl
 
     wb = load_workbook(out / "report.xlsx")
-    assert {"Podsumowanie", "Pozycje", "Pliki", "Do uzyskania mailowo", "Szablony e-mail",
+    assert wb.sheetnames[:5] == ["Podsumowanie", "RoHS", "REACH", "Status cyklu życia", "Długość produkcji"]
+    assert {"Szczegóły pozycji", "Pliki", "Do uzyskania mailowo", "Szablony e-mail",
             "Niepoprawne wiersze"} <= set(wb.sheetnames)
+    # Kolumna "Status" przy MPN + producencie = link do POBRANEGO pliku w folderze (nie do strony WWW)
+    for sheet_name in ("RoHS", "REACH"):
+        ws = wb[sheet_name]
+        header = [c.value for c in ws[1]]
+        c_mpn, c_mfr, c_status = header.index("MPN") + 1, header.index("Producent") + 1, header.index("Status") + 1
+        by_mpn = {ws.cell(r, c_mpn).value: r for r in range(2, ws.max_row + 1)}
+        cell = ws.cell(by_mpn["NDS331N"], c_status)
+        assert ws.cell(by_mpn["NDS331N"], c_mfr).value == "onsemi"
+        assert cell.value.startswith("POBRANO") and cell.hyperlink is not None
+        target = cell.hyperlink.target
+        assert not target.startswith("http") and target.startswith(f"documents/{sheet_name}/onsemi/NDS331N/")
+        assert (out / target).is_file()
+        assert ws.cell(by_mpn["AC-1234"], c_status).hyperlink is None  # brak pliku = brak linku
+    for ws in wb.worksheets:
+        for row in ws.iter_rows():
+            for c in row:
+                if c.hyperlink is not None:
+                    assert not str(c.hyperlink.target).startswith("http"), (ws.title, c.hyperlink.target)
+                    assert (out / c.hyperlink.target).exists(), (ws.title, c.hyperlink.target)
     summary = {r[0]: r[1:] for r in wb["Podsumowanie"].iter_rows(values_only=True) if r and r[0]}
     assert summary["Pozycje BoM po deduplikacji (producent + MPN)"][0] == "6"
     assert summary["Pobrano oba (RoHS i REACH)"][0] == "2"  # onsemi + Nexperia (rodzina)

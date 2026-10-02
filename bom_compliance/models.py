@@ -138,6 +138,10 @@ class DownloadedDoc:
     title: str = ""
     note: str = ""
     shared: bool = False  # ten sam plik użyty dla wielu pozycji BoM
+    paths: dict = field(default_factory=dict)  # DocType -> ścieżka kopii w folderze danego rodzaju
+
+    def path_for(self, doc_type: "DocType") -> str:
+        return self.paths.get(doc_type, self.path)
 
 
 class LifecycleStatus(str, enum.Enum):
@@ -174,6 +178,7 @@ class LongevityInfo:
     source_url: str = ""
     evidence: str = ""
     docs: list["DownloadedDoc"] = field(default_factory=list)
+    snapshot: str = ""        # kopia strony (lista longevity), z której odczytano deklarację
     note: str = ""
 
 

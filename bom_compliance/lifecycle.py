@@ -18,7 +18,7 @@ from bs4 import BeautifulSoup
 
 from .adapters import AdapterContext, BaseAdapter
 from .classify import _mpn_regex, compact, is_exact_end, mpn_prefixes
-from .downloader import Downloader, NotADocument, safe_name
+from .downloader import LIFECYCLE_FOLDER, TYPE_FOLDERS, Downloader, NotADocument, safe_name
 from .http_client import FetchError
 from .models import BomItem, Candidate, DocType, LifecycleInfo, LifecycleStatus, LongevityInfo, Scope, SearchResult
 
@@ -182,12 +182,15 @@ class LifecycleChecker:
             return best
         return LifecycleInfo(note="; ".join(dict.fromkeys(problems)) or "brak danych", checked_at=_now())
 
-    def _snapshot(self, item: BomItem, ctx: AdapterContext, url: str, final: str) -> Path:
+    def _snapshot(self, item: BomItem, ctx: AdapterContext, url: str, final: str,
+                  folder_name: str = LIFECYCLE_FOLDER, label: str = "LIFECYCLE") -> Path:
+        """Kopia strony producenta (dowód), w folderze danego rodzaju informacji."""
         kind, html, _ = ctx.session.page_cache.get(url, ("", "", ""))
-        folder = self.docs_dir / safe_name(item.manufacturer_name) / safe_name(item.mpn)
+        mfr = safe_name(item.manufacturer_name)
+        folder = self.docs_dir / folder_name / mfr / safe_name(item.mpn)
         folder.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        path = folder / f"{safe_name(item.mpn)}__{safe_name(item.manufacturer_name)}__LIFECYCLE__{stamp}.html"
+        path = folder / f"{safe_name(item.mpn)}__{mfr}__{label}__{stamp}.html"
         header = f"<!-- source: {final} | retrieved (UTC): {_now()} -->\n"
         path.write_text(header + (html if kind == "ok" else ""), encoding="utf-8")
         return path
@@ -210,6 +213,7 @@ class LifecycleChecker:
                     scope = "part" if compact(item.mpn) in compact(url) else "family"
                     info.found, info.scope, info.source_url = True, scope, final
                     info.program, info.evidence = "deklaracja na stronie produktu", kw.group(0)
+                    info.snapshot = self._longevity_snapshot(item, ctx, url, final)
                     return self._finish(info, item, ctx)
         # 2) listy programów longevity (HTML)
         for url in m.longevity_pages:
@@ -221,6 +225,7 @@ class LifecycleChecker:
             info = self._from_table(soup, item.mpn) or parse_longevity(soup.get_text(" "), item.mpn)
             if info:
                 info.source_url, info.program = final, info.program or "program longevity producenta"
+                info.snapshot = self._longevity_snapshot(item, ctx, url, final)
                 return self._finish(info, item, ctx)
             general_sources.append(final)
         # 3) dokumenty longevity / polityki EOL (PDF) – pobierane, przeszukiwane pod kątem MPN
@@ -248,6 +253,11 @@ class LifecycleChecker:
         else:
             info.note = "Brak zweryfikowanych źródeł longevity dla tego producenta – do ręcznej weryfikacji"
         return info
+
+    def _longevity_snapshot(self, item: BomItem, ctx: AdapterContext, url: str, final: str) -> str:
+        if not self.settings.save_lifecycle_snapshots:
+            return ""
+        return str(self._snapshot(item, ctx, url, final, TYPE_FOLDERS[DocType.LONGEVITY], "LONGEVITY"))
 
     @staticmethod
     def _from_table(soup: BeautifulSoup, mpn: str) -> LongevityInfo | None:

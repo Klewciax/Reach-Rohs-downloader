@@ -109,7 +109,7 @@ def _doc_cells(r: ItemResult, t: DocType) -> tuple[str, str, str, str]:
     docs = r.docs_for(t)
     if docs:  # pokazuj tylko dokumenty o najlepszym (najwęższym) zakresie
         docs = [d for d in docs if d.scope == docs[0].scope]
-    return ("\n".join(d.path for d in docs), "\n".join(d.final_url if d.final_url == d.url else
+    return ("\n".join(d.path_for(t) for d in docs), "\n".join(d.final_url if d.final_url == d.url else
                                                        f"{d.url} -> {d.final_url}" for d in docs),
             "\n".join(d.scope.value for d in docs), "\n".join(dict.fromkeys(d.downloaded_at for d in docs)))
 
@@ -183,11 +183,13 @@ def file_rows(results: list[ItemResult]) -> list[list[str]]:
     seen: "OrderedDict[str, list]" = OrderedDict()
     for r in results:
         for d in r.docs + (r.longevity.docs if r.longevity else []):
-            if d.path not in seen:
-                seen[d.path] = [d.path, d.url, d.final_url, d.downloaded_at, d.sha256,
-                                ", ".join(sorted(t.value for t in d.doc_types)), d.scope.value,
-                                r.item.manufacturer_name, [], d.title]
-            seen[d.path][8].append(r.item.mpn)
+            for path in dict.fromkeys(list(d.paths.values()) or [d.path]):
+                if path not in seen:
+                    seen[path] = [path, d.url, d.final_url, d.downloaded_at, d.sha256,
+                                  ", ".join(sorted(t.value for t in d.doc_types)), d.scope.value,
+                                  r.item.manufacturer_name, [], d.title]
+                if r.item.mpn not in seen[path][8]:
+                    seen[path][8].append(r.item.mpn)
     return [[*v[:8], ", ".join(v[8]), v[9]] for v in seen.values()]
 
 
@@ -207,7 +209,7 @@ def missing_types(r: ItemResult, settings: Settings) -> list[tuple[str, bool]]:
             out.append((name, True))  # prosimy o deklarację dla konkretnego MPN
         elif not is_success(st, settings):
             out.append((name, False))
-    if settings.check_longevity and r.item.manufacturer is not None:
+    if settings.check_longevity and settings.request_longevity_by_email and r.item.manufacturer is not None:
         lg = r.longevity
         if lg is None or not lg.found or lg.end_year is None:
             out.append(("Longevity", False))
@@ -345,8 +347,11 @@ def write_reports(out_dir: Path, results: list[ItemResult], invalid: list[Invali
     lc_rows = lifecycle_rows(results, settings)
     if lc_rows:
         paths["lifecycle_csv"] = write_csv("report_lifecycle.csv", lifecycle_header(settings), lc_rows)
-    paths["xlsx"] = _write_xlsx(out_dir / "report.xlsx", summary, items, files, file_header, groups, req_rows,
-                                req_header, invalid, meta, settings, item_header, lc_rows)
+    from .excel_report import write_workbook
+
+    paths["xlsx"] = write_workbook(out_dir / "report.xlsx", out_dir, results, summary_lines(summary), meta, settings,
+                                   item_header, items, file_header, files, groups, req_rows, req_header, invalid,
+                                   STATUS_PL, LIFECYCLE_PL)
     return paths
 
 
@@ -394,99 +399,6 @@ def extra_first(s: Summary) -> list[tuple[str, str, str]]:
     ]
 
 
-def _write_xlsx(path: Path, s: Summary, items, files, file_header, groups, req_rows, req_header,
-                invalid: list[InvalidRow], meta: dict, settings: Settings, item_header: list[str],
-                lc_rows: list[list[str]]) -> Path:
-    from openpyxl import Workbook
-    from openpyxl.styles import Alignment, Font, PatternFill
-    from openpyxl.utils import get_column_letter
-
-    wb = Workbook()
-    bold = Font(bold=True)
-    head_fill = PatternFill("solid", fgColor="DDEBF7")
-    fills = {
-        "POBRANO (": PatternFill("solid", fgColor="C6EFCE"),
-        "POBRANO –": PatternFill("solid", fgColor="FFF2CC"),
-        "TYLKO": PatternFill("solid", fgColor="FFF2CC"),
-    }
-    bad = PatternFill("solid", fgColor="FFC7CE")
-
-    def sheet(ws, header, rows, widths=None, status_cols=()):
-        ws.append(header)
-        for c in ws[1]:
-            c.font, c.fill = bold, head_fill
-        for row in rows:
-            ws.append(row)
-        ws.freeze_panes = "A2"
-        ws.auto_filter.ref = ws.dimensions
-        for i, _ in enumerate(header, 1):
-            ws.column_dimensions[get_column_letter(i)].width = (widths or {}).get(i, 22)
-        for row in ws.iter_rows(min_row=2):
-            for c in row:
-                c.alignment = Alignment(wrap_text=True, vertical="top")
-            for col in status_cols:
-                cell = row[col - 1]
-                val = str(cell.value or "")
-                cell.fill = next((f for k, f in fills.items() if val.startswith(k)), bad)
-
-    ws = wb.active
-    ws.title = "Podsumowanie"
-    ws.append(["Raport zgodności RoHS / REACH", "", ""])
-    ws["A1"].font = Font(bold=True, size=14)
-    ws.append(["Wygenerowano (UTC)", datetime.now(timezone.utc).replace(microsecond=0).isoformat(), ""])
-    ws.append(["Arkusz / nagłówek BoM", f"{meta.get('sheet')} / wiersz {meta.get('header_row')}", ""])
-    ws.append(["Mapowanie kolumn", ", ".join(f"{k}={v}" for k, v in (meta.get('columns') or {}).items())
-               + (f" (wykryte na podstawie {meta.get('detection')})" if meta.get("detection") else ""), ""])
-    for line in meta.get("sheets", []):
-        ws.append(["Analiza arkusza", line, ""])
-    for w in meta.get("warnings", []):
-        ws.append(["UWAGA (BoM)", w, ""])
-    ws.append([])
-    ws.append(["Miara", "Liczba", "Procent pozycji"])
-    for c in ws[ws.max_row]:
-        c.font, c.fill = bold, head_fill
-    for row in summary_lines(s):
-        ws.append(list(row))
-    ws.append([])
-    ws.append(["Zasady liczenia", (
-        "Sukces = dokument dla konkretnego MPN" +
-        (" lub dokument zbiorczy dla rodziny" if settings.count_family_as_success else "") +
-        (" lub ogólne oświadczenie producenta" if settings.count_general_as_success else "") +
-        ". Wszystkie pliki pochodzą wyłącznie z oficjalnych domen producentów."), ""])
-    ws.column_dimensions["A"].width = 50
-    ws.column_dimensions["B"].width = 60
-    ws.column_dimensions["C"].width = 16
-
-    widths = {item_header.index(k) + 1: w for k, w in (
-        ("Plik RoHS", 50), ("URL źródłowy RoHS", 60), ("Plik REACH", 50), ("URL źródłowy REACH", 60),
-        ("Powód niepowodzenia / uwagi", 70), ("Do ręcznego sprawdzenia (oficjalne strony)", 60),
-        ("Uwagi do MPN", 60), ("Numery u producenta zaczynające się od MPN", 40), ("Forma MPN", 30))}
-    sheet(wb.create_sheet("Pozycje"), item_header, items, widths,
-          status_cols=(item_header.index("Status RoHS") + 1, item_header.index("Status REACH") + 1))
-    if lc_rows:
-        lc_header = lifecycle_header(settings)
-        ws_lc = wb.create_sheet("Cykl życia i longevity")
-        sheet(ws_lc, lc_header, lc_rows, {1: 22, 2: 22, 4: 30, 7: 50, 8: 60, 9: 40, 11: 50})
-        if settings.check_lifecycle:
-            col = lc_header.index("Status cyklu życia") + 1
-            colors = {"ACTIVE": "C6EFCE", "MATURE": "FFF2CC", "PREVIEW": "FFF2CC", "NRND": "FFEB9C",
-                      "LAST TIME": "FFC7CE", "EOL": "FFC7CE", "NIEZNANY": "EDEDED"}
-            for row in ws_lc.iter_rows(min_row=2):
-                val = str(row[col - 1].value or "")
-                for k, c in colors.items():
-                    if val.startswith(k):
-                        row[col - 1].fill = PatternFill("solid", fgColor=c)
-    sheet(wb.create_sheet("Pliki"), file_header, files, {1: 70, 2: 70, 3: 70, 5: 20})
-    sheet(wb.create_sheet("Do uzyskania mailowo"), req_header, req_rows, {1: 24, 2: 24, 3: 16, 4: 50, 5: 90})
-    sheet(wb.create_sheet("Szablony e-mail"), ["Producent", "Liczba MPN", "Treść e-maila"],
-          [[g.manufacturer, len(g.items), g.email] for g in groups], {1: 24, 2: 12, 3: 120})
-    sheet(wb.create_sheet("Niepoprawne wiersze"), ["Wiersz BoM", "Powód", "Zawartość"],
-          [[r.row_number, r.reason, "; ".join(f"{k}={v}" for k, v in r.raw.items())] for r in invalid],
-          {1: 12, 2: 50, 3: 100})
-    wb.save(path)
-    return path
-
-
 def print_console_summary(s: Summary, groups: list[RequestGroup], paths: dict[str, Path], results: list[ItemResult]
                           ) -> None:
     w = 52
@@ -523,6 +435,11 @@ def print_console_summary(s: Summary, groups: list[RequestGroup], paths: dict[st
             print(f"  {g.manufacturer}: {len(g.items)} MPN – " + ", ".join(m for m, _, _ in g.items[:8])
                   + (" …" if len(g.items) > 8 else ""))
     print("-" * 72)
+    if "xlsx" in paths:
+        print(f"RAPORT GŁÓWNY (Excel): {paths['xlsx']}")
+        print(f"Pobrane pliki:         {paths['xlsx'].parent / 'documents'}  (RoHS / REACH / Status_cyklu_zycia / "
+              "Dlugosc_produkcji)")
     for k, p in paths.items():
-        print(f"{k:<14} {p}")
+        if k != "xlsx":
+            print(f"{k:<14} {p}")
     print("=" * 72)

@@ -78,8 +78,8 @@ def test_example_bom_full_run_all_options_offline(tmp_path):
         assert (out / name).is_file(), name
     assert any((out / "email_templates").iterdir())
     sheets = load_workbook(out / "report.xlsx").sheetnames
-    assert {"Podsumowanie", "Pozycje", "Pliki", "Do uzyskania mailowo", "Szablony e-mail",
-            "Niepoprawne wiersze", "Cykl życia i longevity"} <= set(sheets)
+    assert {"Podsumowanie", "RoHS", "REACH", "Status cyklu życia", "Długość produkcji", "Szczegóły pozycji",
+            "Pliki", "Do uzyskania mailowo", "Szablony e-mail", "Niepoprawne wiersze"} <= set(sheets)
     # Żadne zapytanie nie wyszło poza domeny producentów z rejestru
     reg = yaml.safe_load((ROOT / "config" / "manufacturers.yaml").read_text())["manufacturers"]
     domains = [d for m in reg.values() for d in m["domains"]]

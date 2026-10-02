@@ -93,4 +93,16 @@ def test_full_run_with_lifecycle_and_longevity(tmp_path):
     tpl = (out / "email_templates" / "Microchip_Technology.txt").read_text()
     assert "longevity" in tpl.lower() and "ATMEGA328P-AU" in tpl
     from openpyxl import load_workbook
-    assert "Cykl życia i longevity" in load_workbook(out / "report.xlsx").sheetnames
+    wb = load_workbook(out / "report.xlsx")
+    ws = wb["Długość produkcji"]
+    header = [c.value for c in ws[1]]
+    row = next(r for r in ws.iter_rows(min_row=2) if r[header.index("MPN")].value == "S912XEG128J2CAAR")
+    status = row[header.index("Status")]
+    assert "2033" in status.value and status.hyperlink is not None
+    assert (out / status.hyperlink.target).is_file()  # kopia listy longevity w folderze Dlugosc_produkcji
+    assert status.hyperlink.target.startswith("documents/Dlugosc_produkcji/")
+    ws = wb["Status cyklu życia"]
+    header = [c.value for c in ws[1]]
+    row = next(r for r in ws.iter_rows(min_row=2) if r[header.index("MPN")].value == "LM358DR")
+    assert row[header.index("Status")].value.startswith("ACTIVE")
+    assert row[header.index("Status")].hyperlink.target.startswith("documents/Status_cyklu_zycia/")

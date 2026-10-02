@@ -18,6 +18,22 @@ log = logging.getLogger(__name__)
 
 ACCEPTED_KINDS = {"pdf", "xml", "xls", "xlsx", "zip", "docx"}
 
+# Osobny folder na każdy rodzaj dokumentu: documents/<folder>/<Producent>/<MPN lub _ogolne>/plik.
+# Certyfikat obejmujący RoHS i REACH jest zapisywany w obu folderach.
+TYPE_FOLDERS = {
+    DocType.ROHS: "RoHS",
+    DocType.REACH: "REACH",
+    DocType.LONGEVITY: "Dlugosc_produkcji",
+    DocType.MCD: "Deklaracje_materialowe",
+}
+LIFECYCLE_FOLDER = "Status_cyklu_zycia"
+SHARED_SUBFOLDER = "_ogolne_i_zbiorcze"
+
+
+def folders_for(types: set[DocType]) -> list[DocType]:
+    main = [t for t in (DocType.ROHS, DocType.REACH, DocType.LONGEVITY) if t in types]
+    return main or ([DocType.MCD] if DocType.MCD in types else [DocType.MCD])
+
 
 class NotADocument(Exception):
     """Odpowiedź nie jest dokumentem (np. strona błędu HTML zamiast PDF)."""
@@ -40,7 +56,7 @@ class _Fetched:
         self.url, self.final_url, self.data, self.kind = url, final_url, data, kind
         self.content_type, self.when, self.text = content_type, when, text
         self.sha256 = hashlib.sha256(data).hexdigest()
-        self.saved_path: Path | None = None
+        self.saved: dict[DocType, Path] = {}  # rodzaj (folder) -> zapisany plik
 
 
 class Downloader:
@@ -122,46 +138,54 @@ class Downloader:
             scope, mpn_verified = Scope.FAMILY, "no"
             notes.append("MPN w BoM jest skrótem/wzorcem – dokument nie potwierdza konkretnego wariantu zamówieniowego")
 
-        path = self._save(fetched, item, types, scope)
+        saved = self._save(fetched, item, types, scope)
+        path = next(iter(saved.values()))
         return DownloadedDoc(
             url=cand.url, final_url=fetched.final_url, path=str(path), sha256=fetched.sha256,
+            paths={t: str(p) for t, p in saved.items()},
             downloaded_at=fetched.when, content_type=fetched.kind, doc_types=types, scope=scope,
             mpn_verified=mpn_verified, title=cand.title, note="; ".join(notes),
             shared=scope != Scope.PART,
         )
 
-    def _save(self, fetched: _Fetched, item: BomItem, types: set[DocType], scope: Scope) -> Path:
-        if fetched.saved_path is not None:
-            return fetched.saved_path  # ten sam plik już zapisany (np. dokument zbiorczy)
+    def _save(self, fetched: _Fetched, item: BomItem, types: set[DocType], scope: Scope) -> dict[DocType, Path]:
+        """Zapisuje plik w folderze każdego rodzaju, którego dotyczy (RoHS / REACH / ...).
+        Ten sam plik (URL) jest zapisywany w danym folderze tylko raz."""
         mfr = safe_name(item.manufacturer_name)
         ext = fetched.kind if fetched.kind != "bin" else "dat"
-        if scope == Scope.PART:
-            folder = self.docs_dir / mfr / safe_name(item.mpn)
-            name = f"{safe_name(item.mpn)}__{mfr}__{_types_label(types)}__{fetched.sha256[:8]}.{ext}"
-        else:
-            folder = self.docs_dir / mfr / "_shared"
-            orig = safe_name(Path(unquote(urlsplit(fetched.final_url).path)).stem or "document", 50)
-            name = f"{mfr}__{_types_label(types)}__{scope.value}__{orig}__{fetched.sha256[:8]}.{ext}"
-        folder.mkdir(parents=True, exist_ok=True)
-        path = folder / name
-        path.write_bytes(fetched.data)
-        meta = {
-            "source_url": fetched.url,
-            "final_url": fetched.final_url,
-            "downloaded_at_utc": fetched.when,
-            "sha256": fetched.sha256,
-            "format": fetched.kind,
-            "http_content_type": fetched.content_type,
-            "manufacturer": item.manufacturer_name,
-            "first_requested_for_mpn": item.mpn,
-            "doc_types": sorted(t.value for t in types),
-            "scope": scope.value,
-        }
-        path.with_name(path.name + ".source.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False),
-                                                              encoding="utf-8")
-        fetched.saved_path = path
-        log.info("Zapisano %s (%s)", path, fetched.url)
-        return path
+        out: dict[DocType, Path] = {}
+        for t in folders_for(types):
+            if t in fetched.saved:
+                out[t] = fetched.saved[t]
+                continue
+            base = self.docs_dir / TYPE_FOLDERS[t] / mfr
+            if scope == Scope.PART:
+                folder = base / safe_name(item.mpn)
+                name = f"{safe_name(item.mpn)}__{mfr}__{_types_label(types)}__{fetched.sha256[:8]}.{ext}"
+            else:
+                folder = base / SHARED_SUBFOLDER
+                orig = safe_name(Path(unquote(urlsplit(fetched.final_url).path)).stem or "document", 50)
+                name = f"{mfr}__{_types_label(types)}__{scope.value}__{orig}__{fetched.sha256[:8]}.{ext}"
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder / name
+            path.write_bytes(fetched.data)
+            meta = {
+                "source_url": fetched.url,
+                "final_url": fetched.final_url,
+                "downloaded_at_utc": fetched.when,
+                "sha256": fetched.sha256,
+                "format": fetched.kind,
+                "http_content_type": fetched.content_type,
+                "manufacturer": item.manufacturer_name,
+                "first_requested_for_mpn": item.mpn,
+                "doc_types": sorted(x.value for x in types),
+                "scope": scope.value,
+            }
+            path.with_name(path.name + ".source.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False),
+                                                                  encoding="utf-8")
+            fetched.saved[t] = out[t] = path
+            log.info("Zapisano %s (%s)", path, fetched.url)
+        return out
 
     def text_for(self, url: str) -> str:
         """Tekst wyodrębniony z wcześniej pobranego dokumentu (pusty, jeśli brak)."""

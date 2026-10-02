@@ -174,8 +174,8 @@ python -m bom_compliance examples/bom_example_multisheet.xlsx --dry-run
 # pełne uruchomienie
 python -m bom_compliance examples/bom_example.csv -o output -v
 
-# dodatkowo status cyklu życia (Active/NRND/EOL) i deklaracje długości produkcji
-python -m bom_compliance examples/bom_example.csv -o output --lifecycle --longevity
+# tylko RoHS/REACH, bez statusu cyklu życia i długości produkcji (szybciej)
+python -m bom_compliance examples/bom_example.csv -o output --no-lifecycle --no-longevity
 
 # z własną konfiguracją, wolniejszym tempem i tylko dla wybranych producentów
 python -m bom_compliance bom.xlsx -c my_config.yaml --delay 5 --only TI --only onsemi
@@ -195,33 +195,59 @@ Najważniejsze opcje (pełna lista: `--help`):
 | `--delay`, `--timeout`, `--retries` | tempo zapytań na host, timeout odczytu, liczba ponowień |
 | `--no-general` | nie pobieraj ogólnych oświadczeń producentów |
 | `--no-contacts` | nie szukaj kontaktów do listy „Do uzyskania mailowo” |
-| `--lifecycle` | (opcja) status cyklu życia komponentu ze strony producenta: Active / NRND / Last Time Buy / EOL |
-| `--longevity` | (opcja) deklaracja długości produkcji: program longevity producenta i „do kiedy” |
+| `--no-lifecycle` | nie sprawdzaj statusu cyklu życia (domyślnie sprawdzany: Active / NRND / Last Time Buy / EOL) |
+| `--no-longevity` | nie sprawdzaj długości produkcji (domyślnie sprawdzana: program longevity producenta i „do kiedy”) |
 | `--dry-run` | tylko wczytaj i zdeduplikuj BoM |
 
 ## Wynik
 
+Najważniejszy jest **`report.xlsx`**, czyli raport końcowy w Excelu z osobnymi kartami:
+
+| karta | zawartość |
+|---|---|
+| **Podsumowanie** | liczby i procenty (RoHS, REACH, oba, żaden, statusy cyklu życia, longevity, skróty MPN), analiza arkuszy BoM, linki do folderów z plikami |
+| **RoHS** | jeden wiersz na komponent: MPN, producent, ref. designatory, **Status (link do pliku)**, zakres dokumentu, plik, data pobrania, źródło (adres strony producenta jako tekst), powód niepowodzenia |
+| **REACH** | to samo dla REACH (w tym SVHC) |
+| **Status cyklu życia** | ACTIVE / NRND / LAST TIME BUY / EOL; **Status = link do zapisanej kopii strony producenta**, z której odczytano status; dosłowna etykieta i fragment strony |
+| **Długość produkcji** | „DEKLARACJA: produkcja do RRRR” / objęty programem / tylko ogólna polityka / brak deklaracji; rok końca, okres w latach, podstawa daty; **Status = link do dokumentu lub kopii listy longevity** |
+| Szczegóły pozycji | wszystkie kolumny naraz (analiza MPN, zamienniki, uwagi); statusy RoHS / REACH również jako linki |
+| Pliki | lista wszystkich pobranych plików (link) z URL źródłowym, datą i SHA-256 |
+| Do uzyskania mailowo, Szablony e-mail | pozycje do uzyskania od producenta, pogrupowane per producent, z gotowym mailem (EN) |
+| Niepoprawne wiersze | wiersze BoM pominięte i powód |
+
+Kolumna **„Status”** przy każdym komponencie (MPN + producent) jest linkiem do **pobranego pliku
+w folderze `documents`**, a nie do strony internetowej. Linki są względne, więc działają po
+skopiowaniu albo spakowaniu całego folderu wyjściowego. Plik `report.xlsx` musi zostać w tym
+samym miejscu względem `documents/`. Gdy pliku nie ma (np. dokument wymaga logowania), komórka
+zawiera sam status bez linku. Adres strony producenta jest zawsze podany jako tekst w kolumnie
+„Źródło”.
+
+Pobrane pliki trafiają do **osobnych folderów według rodzaju**:
+
 ```
 output/
+├── report.xlsx                         ← RAPORT GŁÓWNY
 ├── documents/
-│   ├── onsemi/
-│   │   └── NDS331N/
-│   │       ├── NDS331N__onsemi__RoHS-REACH__1a2b3c4d.pdf
-│   │       └── NDS331N__onsemi__RoHS-REACH__1a2b3c4d.pdf.source.json   ← URL, data pobrania, SHA-256
-│   └── Texas_Instruments/
-│       └── _shared/                       ← dokumenty zbiorcze / ogólne (pobierane raz, wspólne dla wielu MPN)
-│           └── Texas_Instruments__REACH__general__szzq087__9f8e7d6c.pdf
-├── report.xlsx            ← Podsumowanie | Pozycje | Cykl życia i longevity* | Pliki | Do uzyskania mailowo | Szablony e-mail | Niepoprawne wiersze
-├── report_items.csv       ← tabela per pozycja (separator ";", UTF-8 z BOM, otwiera się wprost w Excelu)
-├── report_files.csv       ← wszystkie pobrane pliki: ścieżka, URL źródłowy, URL końcowy, data UTC, SHA-256
-├── report_to_request.csv  ← „Do uzyskania mailowo”, pogrupowane per producent
-├── report_lifecycle.csv   ← (opcje --lifecycle/--longevity) status cyklu życia i longevity per pozycja
-├── email_templates/<Producent>.txt  ← jeden zbiorczy e-mail (EN) na producenta + znaleziony kontakt
-└── run.log                ← pełny log (DEBUG)
+│   ├── RoHS/
+│   │   ├── onsemi/NDS331N/NDS331N__onsemi__RoHS-REACH__2ac5ac06.pdf
+│   │   │                  NDS331N__onsemi__RoHS-REACH__2ac5ac06.pdf.source.json  ← URL, data pobrania, SHA-256
+│   │   └── Texas_Instruments/_ogolne_i_zbiorcze/Texas_Instruments__RoHS__general__szzq088__….pdf
+│   ├── REACH/
+│   │   ├── onsemi/NDS331N/NDS331N__onsemi__RoHS-REACH__2ac5ac06.pdf   ← wspólny certyfikat RoHS+REACH: w obu folderach
+│   │   └── Texas_Instruments/_ogolne_i_zbiorcze/…szzq087….pdf
+│   ├── Status_cyklu_zycia/<Producent>/<MPN>/<MPN>__<Producent>__LIFECYCLE__<data>.html   ← kopia strony ze statusem
+│   ├── Dlugosc_produkcji/<Producent>/<MPN>/…LONGEVITY….html | <Producent>/_ogolne_i_zbiorcze/…pdf
+│   └── Deklaracje_materialowe/<Producent>/<MPN>/…MCD….pdf      ← deklaracje składu bez sekcji RoHS/REACH
+├── email_templates/<Producent>.txt     ← zbiorczy e-mail (EN) na producenta + znaleziony kontakt
+├── report_items.csv, report_files.csv, report_to_request.csv, report_lifecycle.csv   ← te same dane w CSV
+└── run.log                             ← pełny log (DEBUG)
 ```
 
-Nazwa pliku: `<MPN>__<Producent>__<rodzaj>__<8 znaków SHA-256>.<ext>`. Pliki zbiorcze mają
-w nazwie zakres (`family` / `general`) i oryginalną nazwę ze strony producenta.
+- Dokument dla konkretnego MPN trafia do `<rodzaj>/<Producent>/<MPN>/`.
+- Dokumenty zbiorcze (rodzina) i ogólne oświadczenia trafiają do
+  `<rodzaj>/<Producent>/_ogolne_i_zbiorcze/`. Są pobierane raz i podlinkowane przy każdym
+  komponencie, którego dotyczą.
+- Nazwa pliku ma postać `<MPN>__<Producent>__<rodzaj>__<8 znaków SHA-256>.<ext>`.
 
 ### Statusy w raporcie
 
@@ -240,7 +266,7 @@ pobranego pliku (tekst z PDF/XML/XLSX). Narzędzie sprawdza, czy w treści wyst�
 nie, to czy występuje prefiks rodziny. Gdy tekstu nie da się odczytać (np. skan), raport podaje
 „MPN potwierdzony w treści: unknown” z adnotacją „do ręcznej weryfikacji”.
 
-## Opcja: status cyklu życia (`--lifecycle`)
+## Status cyklu życia (domyślnie włączony; `--no-lifecycle` wyłącza)
 
 Dla każdej pozycji narzędzie otwiera stronę produktu **na oficjalnej stronie producenta**
 (szablony `product_pages` w `manufacturers.yaml`) i odczytuje oznaczenie statusu. Etykiety producentów
@@ -261,16 +287,17 @@ są normalizowane do wspólnej skali:
   rodziny” oznacza status strony produktu bazowego, np. Microchip `ATMEGA328P` dla `ATMEGA328P-AU`.
   Taki status jest wyraźnie oznaczony w raporcie.
 - **Dowody.** Raport zawiera etykietę dosłownie ze strony, URL, datę sprawdzenia, fragment tekstu
-  oraz zapisaną kopię strony (`documents/<Producent>/<MPN>/…__LIFECYCLE__<data>.html`).
+  oraz zapisaną kopię strony (`documents/Status_cyklu_zycia/<Producent>/<MPN>/…__LIFECYCLE__<data>.html`),
+  do której prowadzi link w kolumnie „Status”.
 - **Linki nawigacyjne** typu „Find Obsolete/EOL products” nie są brane za status. Liczy się tylko
   etykieta „Status: …” albo wartość przy MPN.
 - **Ostrzeżenia.** Komponenty NRND, LTB i EOL są wypisywane w konsoli. W XLSX mają kolorowy status
-  w arkuszu „Cykl życia i longevity”.
+  na karcie „Status cyklu życia”.
 
 Strony produktu skonfigurowane są dla: TI (strona sklepu TI dla MPN), ADI, ST (eStore CPN), Microchip,
 onsemi, NXP i Infineon. Dla pozostałych producentów dopisz `product_pages` w `manufacturers.yaml`.
 
-## Opcja: deklaracja długości produkcji (`--longevity`)
+## Długość produkcji / longevity (domyślnie włączona; `--no-longevity` wyłącza)
 
 Narzędzie szuka deklaracji producenta, jak długo komponent będzie produkowany. Sprawdza po kolei:
 
@@ -358,11 +385,11 @@ do `config/manufacturers.yaml`:
       - url: https://www.acme-components.com/docs/reach-statement.pdf
         types: [REACH]
         scope: general
-    product_pages:                          # opcja --lifecycle: strona produktu ({mpn} {mpn_lower} {base} {base_lower})
+    product_pages:                          # status cyklu życia + analiza MPN: strona produktu ({mpn} {mpn_lower} {base} {base_lower})
       - https://www.acme-components.com/product/{base}
-    longevity_pages:                        # opcja --longevity: lista programu longevity
+    longevity_pages:                        # długość produkcji: lista programu longevity
       - https://www.acme-components.com/longevity
-    longevity_documents:                    # opcja --longevity: polityka EOL / longevity (PDF)
+    longevity_documents:                    # długość produkcji: polityka EOL / longevity (PDF)
       - url: https://www.acme-components.com/docs/eol-policy.pdf
         title: "ACME EOL policy"
         scope: general

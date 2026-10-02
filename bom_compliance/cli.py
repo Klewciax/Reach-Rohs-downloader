@@ -52,9 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-general", action="store_true", help="Nie pobieraj ogólnych oświadczeń producentów")
     p.add_argument("--no-contacts", action="store_true", help="Nie wyszukuj kontaktów na stronach producentów")
     p.add_argument("--lifecycle", action="store_true",
-                   help="Sprawdź status cyklu życia (Active / NRND / Last Time Buy / EOL) na stronie producenta")
+                   help="Status cyklu życia (Active / NRND / Last Time Buy / EOL) – domyślnie włączony")
     p.add_argument("--longevity", action="store_true",
-                   help="Sprawdź programy longevity producenta (do kiedy produkcja) i pobierz polityki EOL/longevity")
+                   help="Długość produkcji / programy longevity producenta – domyślnie włączone")
+    p.add_argument("--no-lifecycle", action="store_true", help="Nie sprawdzaj statusu cyklu życia")
+    p.add_argument("--no-longevity", action="store_true", help="Nie sprawdzaj długości produkcji (longevity)")
     p.add_argument("--dry-run", action="store_true", help="Tylko wczytaj i zdeduplikuj BoM, bez zapytań sieciowych")
     p.add_argument("-v", "--verbose", action="count", default=0, help="Więcej logów (-v, -vv)")
     return p
@@ -71,10 +73,10 @@ def main(argv: list[str] | None = None) -> int:
         "output_dir": args.output, "manufacturers_file": args.manufacturers, "columns": cols or None,
         "sheet": args.sheet, "min_delay_per_host": args.delay, "read_timeout": args.timeout,
         "max_retries": args.retries, "download_general_statements": False if args.no_general else None,
-        "check_lifecycle": True if args.lifecycle else None,
+        "check_lifecycle": False if args.no_lifecycle else (True if args.lifecycle else None),
         "include_alternates": False if args.no_alternates else None,
         "inspect_mpn": False if args.no_mpn_check else None,
-        "check_longevity": True if args.longevity else None,
+        "check_longevity": False if args.no_longevity else (True if args.longevity else None),
     }
     try:
         settings = Settings.load(args.config, overrides)
