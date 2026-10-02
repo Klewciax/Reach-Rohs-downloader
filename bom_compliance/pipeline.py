@@ -9,6 +9,7 @@ from .adapters import AdapterContext, get_adapter
 from .config import Settings
 from .downloader import Downloader, NotADocument
 from .classify import compact, types_from_link
+from .credentials import merged_keys
 from .discovery import ManufacturerDiscovery, _same_company
 from .distributors import DOC_KEYWORDS, DistributorHub
 from .lifecycle import LifecycleChecker
@@ -43,7 +44,7 @@ class Pipeline:
         self.lifecycle = LifecycleChecker(lambda m: AdapterContext(self.session, settings, m),
                                           self.downloader, out_dir, settings)
         self.hub = DistributorHub(self.session, settings.distributor_sources if settings.distributor_fallback
-                                  or settings.auto_discover_manufacturers else [], settings.api_keys)
+                                  or settings.auto_discover_manufacturers else [], merged_keys(settings))
         self.discovery = ManufacturerDiscovery(self.session, self.hub, settings.discovered_manufacturers_file,
                                                settings.auto_discover_manufacturers)
 

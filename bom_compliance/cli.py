@@ -57,6 +57,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Długość produkcji / programy longevity producenta – domyślnie włączone")
     p.add_argument("--no-lifecycle", action="store_true", help="Nie sprawdzaj statusu cyklu życia")
     p.add_argument("--no-longevity", action="store_true", help="Nie sprawdzaj długości produkcji (longevity)")
+    p.add_argument("--credentials", metavar="PLIK",
+                   help="Plik z kluczami API dystrybutorów (domyślnie config/credentials.yaml)")
     p.add_argument("--manufacturer-only", action="store_true",
                    help="Tylko strony producentów – bez zapasowego źródła u dystrybutorów (Octopart/DigiKey/Mouser/TME)")
     p.add_argument("--no-discovery", action="store_true",
@@ -80,6 +82,7 @@ def main(argv: list[str] | None = None) -> int:
         "check_lifecycle": False if args.no_lifecycle else (True if args.lifecycle else None),
         "include_alternates": False if args.no_alternates else None,
         "distributor_fallback": False if args.manufacturer_only else None,
+        "credentials_file": args.credentials,
         "auto_discover_manufacturers": False if args.no_discovery else None,
         "inspect_mpn": False if args.no_mpn_check else None,
         "check_longevity": False if args.no_longevity else (True if args.longevity else None),
@@ -160,6 +163,9 @@ def main(argv: list[str] | None = None) -> int:
             print("Dystrybutorzy (zapasowe źródło, API): " + ", ".join(c.name for c in pipeline.hub.clients))
         if pipeline.hub.missing_keys:
             print("Dystrybutorzy pominięci – brak kluczy API: " + "; ".join(pipeline.hub.missing_keys))
+            if not Path(settings.credentials_file).is_file():
+                print("  Aby ich użyć: python -m bom_compliance.credentials init  (i wpisz klucze w "
+                      "config/credentials.yaml)")
 
     def progress(n, total, res):
         shown = res.item.mpn_bom if res.item.mpn_bom == res.item.mpn else f"{res.item.mpn_bom} -> {res.item.mpn}"

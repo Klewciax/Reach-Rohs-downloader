@@ -152,7 +152,8 @@ def live_checks(settings: Settings, only: set[str] | None = None, parts_file: Pa
                 checks.append(Check(OK if parts else WARN, "dystrybutor",
                                     f"{client.name}: API odpowiada, wyników dla LM358DR: {len(parts)}"))
             except LoginRequired as exc:
-                checks.append(Check(BROKEN, "dystrybutor", f"{client.name}: klucz API odrzucony – {exc}"))
+                checks.append(Check(BROKEN, "dystrybutor", f"{client.name}: klucz API odrzucony – {exc} "
+                                                          "(popraw config/credentials.yaml)"))
             except FetchError as exc:
                 checks.append(Check(NET if exc.status is None else WARN, "dystrybutor", f"{client.name}: {exc}"))
         for key, m in reg.manufacturers.items():

@@ -58,6 +58,7 @@ class Settings:
     distributor_sources: list = field(default_factory=lambda: ["nexar", "digikey", "mouser", "tme"])
     distributor_lookup_always: bool = False  # odpytuj dystrybutorów o statusy także dla kompletnych pozycji
     api_keys: dict = field(default_factory=dict)  # alternatywa dla zmiennych środowiskowych (nie commituj!)
+    credentials_file: str = str(PACKAGE_ROOT / "config" / "credentials.yaml")  # klucze API (wzór: credentials.example.yaml)
     auto_discover_manufacturers: bool = True  # producent spoza rejestru -> wykryj i zweryfikuj jego domenę
     discovered_manufacturers_file: str = str(PACKAGE_ROOT / "config" / "discovered_manufacturers.yaml")
 

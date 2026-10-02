@@ -56,8 +56,6 @@ distributor_fallback: true        # brak dokumentu na stronie producenta -> Octo
 distributor_sources: [nexar, digikey, mouser, tme]
 distributor_lookup_always: false  # true = pobieraj statusy RoHS/REACH/cyklu życia od dystrybutorów dla każdej pozycji
 auto_discover_manufacturers: true # producent spoza rejestru -> automatyczne wykrycie i weryfikacja jego strony
-# Klucze API najlepiej podać w zmiennych środowiskowych: NEXAR_CLIENT_ID, NEXAR_CLIENT_SECRET,
-# DIGIKEY_CLIENT_ID, DIGIKEY_CLIENT_SECRET, MOUSER_API_KEY, TME_TOKEN, TME_APP_SECRET.
-# Ewentualnie w pliku konfiguracyjnym (nie commituj go!):
-# api_keys:
-#   MOUSER_API_KEY: "..."
+# Klucze API: wpisz je w config/credentials.yaml (utwórz: python -m bom_compliance.credentials init).
+# Zmienne środowiskowe (DIGIKEY_CLIENT_ID itd.) mają pierwszeństwo przed plikiem.
+# credentials_file: config/credentials.yaml

@@ -46,4 +46,25 @@ def settings(tmp_path):
         "delay_jitter": 0.0,
         "backoff_base": 0.0,
         "max_retries": 2,
+        "credentials_file": str(tmp_path / "no-credentials.yaml"),
+        "discovered_manufacturers_file": str(tmp_path / "discovered.yaml"),
     })
+
+
+@pytest.fixture(autouse=True)
+def _isolate_user_files(tmp_path, monkeypatch):
+    """Testy nie mogą czytać prawdziwych kluczy ani pisać do config/ użytkownika."""
+    import bom_compliance.config as cfg
+
+    orig = cfg.Settings.load.__func__
+
+    def load(cls, path=None, overrides=None):
+        o = {"credentials_file": str(tmp_path / "no-credentials.yaml"),
+             "discovered_manufacturers_file": str(tmp_path / "discovered.yaml")}
+        o.update(overrides or {})
+        return orig(cls, path, o)
+
+    monkeypatch.setattr(cfg.Settings, "load", classmethod(load))
+    for v in ("DIGIKEY_CLIENT_ID", "DIGIKEY_CLIENT_SECRET", "NEXAR_CLIENT_ID", "NEXAR_CLIENT_SECRET",
+              "MOUSER_API_KEY", "TME_TOKEN", "TME_APP_SECRET"):
+        monkeypatch.delenv(v, raising=False)

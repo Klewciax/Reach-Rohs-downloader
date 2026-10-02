@@ -37,6 +37,15 @@ python -m pytest              # wszystkie testy (jednostkowe + smoke offline)
 python -m pytest -m smoke     # tylko smoke testy
 ```
 
+## Szybki start
+
+```bash
+pip install -r requirements.txt
+python -m bom_compliance.credentials init      # opcjonalnie: klucze API dystrybutorów (DigiKey, Octopart…)
+python -m bom_compliance twoj_bom.xlsx --dry-run   # podgląd: arkusze, kolumny, MPN
+python -m bom_compliance twoj_bom.xlsx -o output   # wynik: output/report.xlsx + output/documents/
+```
+
 ## Smoke testy
 
 Smoke testy szybko sprawdzają, czy narzędzie działa jako całość. Są dwa tryby:
@@ -355,28 +364,33 @@ Kolejność źródeł dla każdej pozycji BoM:
 
 Wyłączenie dystrybutorów: `--manufacturer-only` albo `distributor_fallback: false`.
 
-### Klucze API dystrybutorów
+### Klucze API dystrybutorów: plik `config/credentials.yaml`
 
 Strony WWW DigiKey, Mouser, Octopart i TME blokują automaty, a ich regulaminy zabraniają scrapingu,
-dlatego narzędzie używa wyłącznie ich oficjalnych API. Klucze są bezpłatne po rejestracji konta
-deweloperskiego (limity zapytań zależą od planu). Podaj je w zmiennych środowiskowych:
-
-| źródło | zmienne środowiskowe | co daje |
-|---|---|---|
-| Nexar / Octopart | `NEXAR_CLIENT_ID`, `NEXAR_CLIENT_SECRET` | dokumenty (w tym zgodności), **strona producenta** (pomaga wykryć nieznanych producentów) |
-| DigiKey (API v4) | `DIGIKEY_CLIENT_ID`, `DIGIKEY_CLIENT_SECRET` | dokumenty z sekcji „Environmental Information”, status RoHS / REACH, status produktu |
-| Mouser (Search API) | `MOUSER_API_KEY` | status RoHS, status cyklu życia, link do karty katalogowej (Mouser API nie udostępnia dokumentów zgodności) |
-| TME | `TME_TOKEN`, `TME_APP_SECRET` | dokumenty produktu (w tym deklaracje), producent |
+dlatego narzędzie używa wyłącznie ich oficjalnych API. Konta deweloperskie są bezpłatne.
 
 ```bash
-export DIGIKEY_CLIENT_ID=...  DIGIKEY_CLIENT_SECRET=...
-export MOUSER_API_KEY=...
-python -m bom_compliance bom.xlsx -o output
+python -m bom_compliance.credentials init            # tworzy config/credentials.yaml ze wzoru (chmod 600)
+#   … wpisz klucze w config/credentials.yaml …
+python -m bom_compliance.credentials status --check  # pokazuje ustawione klucze (zamaskowane) i testuje API
 ```
 
-Bez klucza dane źródło jest pomijane, a konsola wypisuje, których kluczy brakuje. Klucze można też
-wpisać do `api_keys:` w pliku konfiguracyjnym, ale **nie commituj takiego pliku**.
-`python -m bom_compliance.smoke --live` sprawdza, czy klucze działają.
+Plik `config/credentials.yaml` jest w `.gitignore`, więc nie trafi do repozytorium. Wzór z instrukcją
+rejestracji przy każdym serwisie: [`config/credentials.example.yaml`](config/credentials.example.yaml).
+
+| serwis | przydatność | co daje | pola w pliku |
+|---|---|---|---|
+| **DigiKey** (API v4) | ★★★ zalecane | certyfikaty RoHS/REACH z sekcji „Environmental Information”, status RoHS / REACH, status produktu | `digikey.client_id`, `digikey.client_secret` |
+| **Nexar / Octopart** | ★★★ zalecane | **oficjalna strona producenta** (najlepsza pomoc przy wykrywaniu producentów spoza rejestru), dokumenty części; plan darmowy ma miesięczny limit części | `nexar.client_id`, `nexar.client_secret` |
+| **Mouser** (Search API) | ★ pomocniczo | status RoHS i cyklu życia, karta katalogowa; **bez plików zgodności** | `mouser.api_key` |
+| **TME** | eksperymentalne | dokumenty produktu; narzędzie używa starszej wersji TME API (podpis HMAC), którą TME oznacza jako przestarzałą na rzecz v2 (OAuth2), więc może przestać działać | `tme.token`, `tme.app_secret` |
+
+- Kolejność (ostatnie wygrywa): `config/credentials.yaml` → `api_keys:` w pliku konfiguracyjnym →
+  zmienne środowiskowe (`DIGIKEY_CLIENT_ID`, `DIGIKEY_CLIENT_SECRET`, `NEXAR_CLIENT_ID`,
+  `NEXAR_CLIENT_SECRET`, `MOUSER_API_KEY`, `TME_TOKEN`, `TME_APP_SECRET`).
+- Inny plik z kluczami: `--credentials ŚCIEŻKA`.
+- Bez kluczy dany serwis jest pomijany, a konsola wypisuje, których brakuje.
+- Odrzucony klucz (HTTP 401/403) jest zgłaszany raz i dany serwis nie jest już odpytywany w tym przebiegu.
 
 ## Producenci spoza rejestru: wykrywanie automatyczne
 

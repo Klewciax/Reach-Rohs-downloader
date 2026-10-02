@@ -22,7 +22,8 @@ def _settings(tmp_path, **kw):
     base = {"output_dir": str(tmp_path), "min_delay_per_host": 0, "delay_jitter": 0, "max_retries": 0,
             "download_general_statements": False, "generic_max_pages": 3, "check_lifecycle": False,
             "check_longevity": False, "inspect_mpn": False,
-            "discovered_manufacturers_file": str(tmp_path / "discovered.yaml")}
+            "discovered_manufacturers_file": str(tmp_path / "discovered.yaml"),
+            "credentials_file": str(tmp_path / "no-credentials.yaml")}
     base.update(kw)
     return Settings.load(None, base)
 
