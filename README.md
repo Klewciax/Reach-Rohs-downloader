@@ -388,8 +388,8 @@ Strony WWW DigiKey, Mouser, Octopart i TME blokują automaty, a ich regulaminy z
 dlatego narzędzie używa wyłącznie ich oficjalnych API. Konta deweloperskie są bezpłatne.
 
 ```bash
-python -m bom_compliance.credentials                 # KREATOR: wybierz serwisy z listy i wpisz klucze
-python -m bom_compliance.credentials status --check  # pokazuje ustawione klucze (zamaskowane) i testuje API
+python -m bom_compliance.credentials                 # KREATOR: wybierz serwisy z listy i wklej klucze
+python -m bom_compliance.credentials status --check  # pokazuje wpisane klucze i testuje dostęp do API
 python -m bom_compliance.credentials remove digikey  # usuwa klucze wybranego serwisu
 ```
 
@@ -403,15 +403,22 @@ Kreator działa tak:
 Do których serwisów chcesz mieć dostęp? Podaj numery, np. 1,2 ('all' = wszystkie, Enter = zakończ): 1,2
 === DigiKey ===
   • Wejdź na https://developer.digikey.com/ …          ← instrukcja zdobycia klucza
-  Client ID:                                            ← wpisywane znaki są ukryte
-  Client Secret:
+  Client ID: Ab12Cd34Ef56Gh78                          ← wartość widoczna
+    -> zapisano Client ID: 'Ab12Cd34Ef56Gh78' (16 znaków)
+  Client Secret: …
 …
 Sprawdzić teraz klucze zapytaniem do API? [T/n]:
 ```
 
 - Każdy wybrany serwis wyświetla krótką instrukcję, skąd wziąć klucz.
-- Wpisywane klucze są niewidoczne. Przy ponownym uruchomieniu Enter zostawia obecną wartość,
-  a `-` ją usuwa.
+- Wklejane klucze są **widoczne**, a kreator powtarza zapisaną wartość i jej długość, więc łatwo
+  sprawdzić, czy wkleiła się cała. Ukrywanie: `python -m bom_compliance.credentials setup --hide`.
+- Kreator sam usuwa typowe śmieci z wklejenia (spacje, nowe linie, cudzysłowy, przedrostek
+  `Bearer`). Ostrzega też przed podejrzanymi wartościami: spacja w środku, skrócona wartość
+  z `…`, ten sam tekst w obu polach, polskie litery albo niewidoczne znaki.
+- Przy ponownym uruchomieniu Enter zostawia obecną wartość, a `-` ją usuwa.
+- Dla DigiKey kreator pyta, czy aplikacja jest typu **Sandbox**. Klucze sandbox działają tylko
+  z `sandbox-api.digikey.com`, a pomylenie typu daje błąd dostępu.
 - Kreator zapisuje `config/credentials.yaml` z prawami tylko dla właściciela i od razu może
   przetestować klucze.
 - Ręczna edycja też działa: `python -m bom_compliance.credentials init` tworzy pusty plik ze wzoru.
@@ -432,6 +439,14 @@ rejestracji przy każdym serwisie: [`config/credentials.example.yaml`](config/cr
 - Inny plik z kluczami: `--credentials ŚCIEŻKA`.
 - Bez kluczy dany serwis jest pomijany, a konsola wypisuje, których brakuje.
 - Odrzucony klucz (HTTP 401/403) jest zgłaszany raz i dany serwis nie jest już odpytywany w tym przebiegu.
+- `status --check` przy błędzie dostępu pokazuje odpowiedź serwera (np. `invalid_client`) i
+  podpowiada, co sprawdzić:
+  - błąd przy pobieraniu tokenu: zły Client ID lub Secret, pola zamienione miejscami, klucze
+    z różnych aplikacji, Sandbox zamiast Production;
+  - błąd przy zapytaniu o produkt: aplikacja nie ma dostępu do API „Product Information v4”
+    (DigiKey) albo do zakresu „Supply” (Nexar);
+  - Mouser: klucz innego API niż Search API.
+- `status --mask` ukrywa wartości, np. gdy wysyłasz komuś zrzut ekranu.
 
 ## Producenci spoza rejestru: wykrywanie automatyczne
 

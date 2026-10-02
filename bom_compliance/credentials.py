@@ -1,7 +1,7 @@
 """Dane logowania do API dystrybutorów (config/credentials.yaml).
 
-    python -m bom_compliance.credentials                  # KREATOR: wybierz serwisy i wpisz klucze (ukryte)
-    python -m bom_compliance.credentials status           # które klucze są ustawione (zamaskowane)
+    python -m bom_compliance.credentials                  # KREATOR: wybierz serwisy i wklej klucze (widoczne)
+    python -m bom_compliance.credentials status           # pokaż wpisane klucze (--mask = zamaskowane)
     python -m bom_compliance.credentials status --check   # dodatkowo sprawdź klucze zapytaniem do API
     python -m bom_compliance.credentials remove digikey   # usuń klucze serwisu
     python -m bom_compliance.credentials init             # pusty plik ze wzoru (do ręcznej edycji)
@@ -34,6 +34,7 @@ EXAMPLE_CREDENTIALS = PACKAGE_ROOT / "config" / "credentials.example.yaml"
 FIELDS = {
     ("digikey", "client_id"): "DIGIKEY_CLIENT_ID",
     ("digikey", "client_secret"): "DIGIKEY_CLIENT_SECRET",
+    ("digikey", "sandbox"): "DIGIKEY_SANDBOX",
     ("nexar", "client_id"): "NEXAR_CLIENT_ID",
     ("nexar", "client_secret"): "NEXAR_CLIENT_SECRET",
     ("mouser", "api_key"): "MOUSER_API_KEY",
@@ -84,7 +85,46 @@ def _mask(v: str) -> str:
     return v[:3] + "…" + v[-2:] if len(v) > 8 else "***"
 
 
-def status_lines(settings, check: bool = False) -> list[str]:
+def clean_value(raw: str) -> tuple[str, list[str]]:
+    """Usuwa typowe śmieci z wklejonego klucza i mówi, co poprawiono."""
+    fixes = []
+    v = raw.replace("\ufeff", "").replace("\u200b", "")
+    if v != v.strip():
+        fixes.append("usunięto spacje / znaki nowej linii z początku lub końca")
+        v = v.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'`":
+        fixes.append("usunięto cudzysłowy wokół wartości")
+        v = v[1:-1].strip()
+    for prefix in ("Bearer ", "client_id=", "client_secret=", "apiKey=", "api_key="):
+        if v.lower().startswith(prefix.lower()):
+            fixes.append(f"usunięto przedrostek '{prefix.strip()}'")
+            v = v[len(prefix):].strip()
+    return v, fixes
+
+
+def diagnose(field_label: str, value: str, other_values: list[str] = ()) -> list[str]:
+    """Ostrzeżenia o podejrzanych wartościach (nie blokują zapisu)."""
+    w = []
+    if not value:
+        return w
+    if " " in value or "\t" in value:
+        w.append(f"{field_label}: zawiera spację w środku – klucze API zwykle jej nie mają, sprawdź kopiowanie")
+    if any(ord(c) > 126 or ord(c) < 32 for c in value):
+        w.append(f"{field_label}: zawiera nietypowe znaki (np. polskie litery, niewidoczne znaki) – skopiuj ponownie")
+    if len(value) < 8:
+        w.append(f"{field_label}: bardzo krótki ({len(value)} znaków) – czy to na pewno cały klucz?")
+    if "…" in value or "..." in value or value.endswith("*"):
+        w.append(f"{field_label}: wygląda na skróconą/zamaskowaną wartość z portalu – skopiuj pełny klucz")
+    if value in other_values:
+        w.append(f"{field_label}: ma tę samą wartość co inne pole – czy nie wkleiłeś dwa razy tego samego?")
+    return w
+
+
+def _show(v: str, mask: bool) -> str:
+    return (_mask(v) if mask else f"'{v}'") + f" ({len(v)} znaków)"
+
+
+def status_lines(settings, check: bool = False, mask: bool = False) -> list[str]:
     from .distributors import CLIENTS, DistributorHub
     from .http_client import PoliteSession
 
@@ -97,24 +137,22 @@ def status_lines(settings, check: bool = False) -> list[str]:
         if cls in seen:
             continue
         seen.add(cls)
-        parts = []
-        for env in cls.env:
-            if os.environ.get(env):
-                parts.append(f"{env}={_mask(os.environ[env])} (zmienna środowiskowa)")
-            elif keys.get(env):
-                parts.append(f"{env}={_mask(keys[env])} (plik)")
-            else:
-                parts.append(f"{env}=brak")
         ok = all(os.environ.get(e) or keys.get(e) for e in cls.env)
-        lines.append(f"  [{'OK ' if ok else ' - '}] {cls.name:<15} " + ", ".join(parts))
+        lines.append(f"  [{'OK ' if ok else ' - '}] {cls.name}")
+        values = [os.environ.get(e) or keys.get(e) or "" for e in cls.env]
+        for env in cls.env + cls.optional_env:
+            v = os.environ.get(env) or keys.get(env)
+            src = "zmienna środowiskowa" if os.environ.get(env) else "plik"
+            if v:
+                lines.append(f"        {env:<22} = {_show(v, mask)}  [{src}]")
+                for warn in diagnose(env, v, [x for x in values if x is not v and x != ""] if env in cls.env else []):
+                    lines.append(f"        UWAGA: {warn}")
+            elif env in cls.env:
+                lines.append(f"        {env:<22} = brak")
     if check:
         hub = DistributorHub(PoliteSession(settings), settings.distributor_sources, keys)
         for client in hub.clients:
-            try:
-                parts = client.lookup("LM358DR")
-                lines.append(f"  test {client.name}: API odpowiada (wyników dla LM358DR: {len(parts)})")
-            except Exception as exc:  # noqa: BLE001 – pokazujemy każdy błąd użytkownikowi
-                lines.append(f"  test {client.name}: BŁĄD – {exc}")
+            lines.append(f"  test {client.name}: {_test_one(client)}")
     return lines
 
 
@@ -198,16 +236,20 @@ def _parse_choice(answer: str, n: int) -> list[int] | None:
     return out
 
 
-def setup_wizard(path: Path, input_fn=input, secret_fn=getpass.getpass, out=print, test_fn=None) -> int:
-    """Interaktywny wybór serwisów i wpisanie kluczy (ukryte znaki). Zwraca liczbę zmienionych serwisów."""
+def setup_wizard(path: Path, input_fn=input, secret_fn=None, out=print, test_fn=None, hide: bool = False) -> int:
+    """Interaktywny wybór serwisów i wpisanie kluczy. Domyślnie wpisywane wartości są WIDOCZNE
+    (łatwiej sprawdzić, czy klucz wkleił się poprawnie); hide=True ukrywa je. Zwraca liczbę zmienionych serwisów."""
+    if secret_fn is None:
+        secret_fn = getpass.getpass if hide else input_fn
     current = _read_raw(path)
     values = {s.section: {f: str((current.get(s.section) or {}).get(f) or "") for f, _ in s.fields}
               for s in SERVICES}
+    values["digikey"]["sandbox"] = str((current.get("digikey") or {}).get("sandbox") or "")
 
     out("Konfiguracja kluczy API dystrybutorów (zapasowe źródło dokumentów RoHS/REACH).")
     out(f"Plik: {path}\n")
     for i, svc in enumerate(SERVICES, 1):
-        state = "skonfigurowany" if all(values[svc.section].values()) else "brak kluczy"
+        state = "skonfigurowany" if all(values[svc.section][f] for f, _ in svc.fields) else "brak kluczy"
         out(f"  {i}. {svc.name:<17} {svc.rating:<15} [{state}]")
         out(f"     {svc.gives}")
     out("")
@@ -223,28 +265,64 @@ def setup_wizard(path: Path, input_fn=input, secret_fn=getpass.getpass, out=prin
         out(f"\n=== {svc.name} ===")
         for step in svc.signup:
             out(f"  • {step}")
-        out("  (wpisywane znaki są ukryte; Enter = zostaw obecną wartość; '-' = usuń klucz)")
+        out("  (wklej wartość i Enter; Enter bez wartości = zostaw obecną; '-' = usuń)")
         for field_name, label in svc.fields:
             old = values[svc.section][field_name]
-            hint = f" [obecnie: {_mask(old)}]" if old else ""
-            new = secret_fn(f"  {label}{hint}: ").strip()
-            if new == "-":
+            if old:
+                out(f"  {label} – obecnie: {_show(old, hide)}")
+            raw = secret_fn(f"  {label}: ")
+            if raw.strip() == "-":
                 values[svc.section][field_name] = ""
-            elif new:
-                values[svc.section][field_name] = new
-        if values[svc.section] != {f: str((current.get(svc.section) or {}).get(f) or "") for f, _ in svc.fields}:
+                out(f"    -> usunięto")
+                continue
+            new, fixes = clean_value(raw)
+            if not new:
+                continue
+            values[svc.section][field_name] = new
+            for f in fixes:
+                out(f"    poprawka: {f}")
+            out(f"    -> zapisano {label}: {_show(new, hide)}")
+        if svc.section == "digikey":
+            cur = str(values["digikey"].get("sandbox") or "").lower() in ("true", "1", "tak", "t", "yes")
+            ans = input_fn(f"  Czy aplikacja DigiKey jest typu Sandbox? [t/N] (obecnie: {'tak' if cur else 'nie'}): ")
+            if ans.strip():
+                values["digikey"]["sandbox"] = "true" if ans.strip().lower() in ("t", "tak", "y", "yes") else ""
+        vals = [values[svc.section][f] for f, _ in svc.fields]
+        for (field_name, label), v in zip(svc.fields, vals):
+            for warn in diagnose(label, v, [x for x in vals if x is not v and x]):
+                out(f"    UWAGA: {warn}")
+        before = {f: str((current.get(svc.section) or {}).get(f) or "") for f in values[svc.section]}
+        if values[svc.section] != before:
             changed.append(svc)
     if not changed:
         out("\nBez zmian.")
         return 0
     write_credentials(path, values)
-    out(f"\nZapisano {path} (prawa dostępu tylko dla właściciela). Plik jest w .gitignore.")
+    out(f"\nZapisano {path} (prawa dostępu tylko dla właściciela, plik jest w .gitignore).")
+    out("Możesz go też otworzyć w Notatniku i sprawdzić/poprawić wartości.")
     if test_fn is not None:
         if input_fn("Sprawdzić teraz klucze zapytaniem do API? [T/n]: ").strip().lower() in ("", "t", "y", "tak", "yes"):
             for svc in changed:
-                if all(values[svc.section].values()):
+                if all(values[svc.section][f] for f, _ in svc.fields):
                     out(f"  {svc.name}: {test_fn(svc.client)}")
     return len(changed)
+
+
+def _test_one(client) -> str:
+    from .http_client import FetchError, LoginRequired
+
+    try:
+        parts = client.lookup("LM358DR")
+        return f"OK – dostęp działa (wyników dla LM358DR: {len(parts)})"
+    except LoginRequired as exc:
+        hint = client.explain(exc)
+        return f"BŁĄD DOSTĘPU – {exc}" + (f"\n        Co sprawdzić: {hint}" if hint else "")
+    except FetchError as exc:
+        if exc.status is None:
+            return f"BŁĄD SIECI – {exc} (sprawdź połączenie / proxy / firewall)"
+        return f"BŁĄD – {exc}"
+    except Exception as exc:  # noqa: BLE001 – pokazujemy każdy błąd użytkownikowi
+        return f"BŁĄD – {exc.__class__.__name__}: {exc}"
 
 
 def _test_client(settings, client_key: str) -> str:
@@ -255,11 +333,7 @@ def _test_client(settings, client_key: str) -> str:
     keys = cls.credentials(merged_keys(settings))
     if keys is None:
         return "brak kompletu kluczy"
-    try:
-        parts = cls(PoliteSession(settings), keys).lookup("LM358DR")
-        return f"OK – API odpowiada (wyników dla LM358DR: {len(parts)})"
-    except Exception as exc:  # noqa: BLE001 – pokazujemy każdy błąd użytkownikowi
-        return f"BŁĄD – {exc}"
+    return _test_one(cls(PoliteSession(settings), keys))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -273,10 +347,12 @@ def main(argv: list[str] | None = None) -> int:
         description="Klucze API dystrybutorów. Bez argumentów uruchamia kreator (wybór serwisów i wpisanie kluczy).")
     p.add_argument("--path", default=None, help="Plik z kluczami (domyślnie config/credentials.yaml)")
     sub = p.add_subparsers(dest="cmd")
-    sub.add_parser("setup", help="Kreator: wybierz serwisy i wpisz klucze (domyślna komenda)")
+    st = sub.add_parser("setup", help="Kreator: wybierz serwisy i wpisz klucze (domyślna komenda)")
+    st.add_argument("--hide", action="store_true", help="Ukrywaj wpisywane klucze (domyślnie widoczne)")
     sub.add_parser("init", help="Utwórz pusty config/credentials.yaml ze wzoru (do ręcznej edycji)")
     s = sub.add_parser("status", help="Pokaż, które klucze są ustawione")
     s.add_argument("--check", action="store_true", help="Sprawdź klucze zapytaniem do API")
+    s.add_argument("--mask", action="store_true", help="Zamaskuj klucze na wydruku (domyślnie widoczne)")
     s.add_argument("-c", "--config", help="Plik konfiguracyjny YAML")
     r = sub.add_parser("remove", help="Usuń klucze wybranego serwisu")
     r.add_argument("service", choices=[svc.section for svc in SERVICES])
@@ -288,7 +364,7 @@ def main(argv: list[str] | None = None) -> int:
     if cmd == "setup":
         settings = Settings.load(None, {"credentials_file": str(target)})
         try:
-            setup_wizard(target, test_fn=lambda key: _test_client(settings, key))
+            setup_wizard(target, test_fn=lambda key: _test_client(settings, key), hide=getattr(args, "hide", False))
         except (KeyboardInterrupt, EOFError):
             print("\nPrzerwano – nic nie zapisano.")
             return 1
@@ -304,12 +380,13 @@ def main(argv: list[str] | None = None) -> int:
         raw = _read_raw(target)
         svc = next(x for x in SERVICES if x.section == args.service)
         values = {x.section: {f: str((raw.get(x.section) or {}).get(f) or "") for f, _ in x.fields} for x in SERVICES}
-        values[svc.section] = {f: "" for f, _ in svc.fields}
+        values["digikey"]["sandbox"] = str((raw.get("digikey") or {}).get("sandbox") or "")
+        values[svc.section] = {f: "" for f in values[svc.section]}
         write_credentials(target, values)
         print(f"Usunięto klucze: {svc.name}")
         return 0
     settings = Settings.load(getattr(args, "config", None), {"credentials_file": str(target)})
-    for line in status_lines(settings, check=args.check):
+    for line in status_lines(settings, check=args.check, mask=args.mask):
         print(line)
     return 0
 

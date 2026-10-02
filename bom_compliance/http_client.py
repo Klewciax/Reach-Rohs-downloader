@@ -233,9 +233,10 @@ class PoliteSession:
             raise DomainNotAllowed(url, f"Domena API spoza listy {domains}")
         resp = self._raw_request(method, url, host_of(url), **kwargs)
         if resp.status_code in (401, 403):
+            body = " ".join((resp.text or "").split())[:300]
             resp.close()
-            raise LoginRequired(url, f"API odrzuciło dane logowania (HTTP {resp.status_code}) – sprawdź klucz API",
-                                resp.status_code)
+            raise LoginRequired(url, f"API odrzuciło dostęp (HTTP {resp.status_code})"
+                                     + (f"; odpowiedź serwera: {body}" if body else ""), resp.status_code)
         if resp.status_code >= 400:
             body = resp.text[:200]
             resp.close()

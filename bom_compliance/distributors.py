@@ -65,6 +65,7 @@ class DistributorClient:
     #: domeny, z których wolno pobrać dokument wskazany przez to źródło (poza domenami producenta)
     doc_domains: list[str] = []
     env: tuple[str, ...] = ()
+    optional_env: tuple[str, ...] = ()
 
     def __init__(self, session: PoliteSession, keys: dict[str, str]):
         self.session = session
@@ -78,7 +79,15 @@ class DistributorClient:
             if not v:
                 return None
             vals[var] = str(v)
+        for var in cls.optional_env:
+            v = os.environ.get(var) or (config_keys or {}).get(var)
+            if v:
+                vals[var] = str(v)
         return vals
+
+    def explain(self, exc: Exception) -> str:
+        """Podpowiedź dla użytkownika, co najpewniej jest nie tak (błędy dostępu)."""
+        return ""
 
     def lookup(self, mpn: str) -> list[DistributorPart]:  # pragma: no cover - interfejs
         raise NotImplementedError
@@ -96,10 +105,23 @@ class _OAuthClient(DistributorClient):
         data = {"grant_type": "client_credentials", "client_id": cid, "client_secret": secret}
         if self.scope:
             data["scope"] = self.scope
-        resp = self.session.api("POST", self.token_url, self.api_domains, data=data)
+        try:
+            resp = self.session.api("POST", self.token_url, self.api_domains, data=data)
+        except FetchError as exc:
+            if exc.status in (400, 401, 403):
+                raise LoginRequired(exc.url, f"serwer autoryzacji odrzucił Client ID / Client Secret ({exc})",
+                                    exc.status) from None
+            raise
         body = resp.json()
         self._token = (body["access_token"], time.time() + float(body.get("expires_in", 600)))
         return self._token[0]
+
+
+    def explain(self, exc: Exception) -> str:
+        if self.token_url and getattr(exc, "url", "").startswith(self.token_url):
+            return ("Client ID lub Client Secret jest nieprawidłowy: sprawdź, czy nie zamieniłeś pól miejscami, "
+                    "czy skopiowałeś cały ciąg (bez spacji i cudzysłowów) i czy klucze są z tej samej aplikacji")
+        return ""
 
 
 class NexarClient(_OAuthClient):
@@ -119,6 +141,10 @@ class NexarClient(_OAuthClient):
     } }
   }
 }"""
+
+    def explain(self, exc: Exception) -> str:
+        return super().explain(exc) or ("token uzyskany, ale API odmawia dostępu – w portalu Nexar sprawdź, "
+                                        "czy aplikacja ma zakres (scope) 'Supply' i nie wyczerpała limitu")
 
     def lookup(self, mpn: str) -> list[DistributorPart]:
         resp = self.session.api("POST", "https://api.nexar.com/graphql", self.api_domains,
@@ -143,10 +169,25 @@ class NexarClient(_OAuthClient):
 class DigiKeyClient(_OAuthClient):
     name = "DigiKey"
     env = ("DIGIKEY_CLIENT_ID", "DIGIKEY_CLIENT_SECRET")
-    api_domains = ["api.digikey.com"]
+    optional_env = ("DIGIKEY_SANDBOX",)
+    api_domains = ["api.digikey.com", "sandbox-api.digikey.com"]
     doc_domains = ["digikey.com"]
-    token_url = "https://api.digikey.com/v1/oauth2/token"
-    BASE = "https://api.digikey.com/products/v4/search"
+
+    def __init__(self, session: PoliteSession, keys: dict[str, str]):
+        super().__init__(session, keys)
+        sandbox = str(keys.get("DIGIKEY_SANDBOX", "")).strip().lower() in ("1", "true", "yes", "tak", "t")
+        host = "https://sandbox-api.digikey.com" if sandbox else "https://api.digikey.com"
+        self.token_url = f"{host}/v1/oauth2/token"
+        self.BASE = f"{host}/products/v4/search"
+        self.sandbox = sandbox
+
+    def explain(self, exc: Exception) -> str:
+        base = super().explain(exc)
+        if base:
+            other = "produkcyjna (sandbox: false)" if self.sandbox else "typu Sandbox (ustaw sandbox: true)"
+            return base + f"; albo aplikacja w portalu DigiKey jest {other}"
+        return ("token uzyskany, ale API produktów odmawia dostępu – w portalu DigiKey dodaj do aplikacji "
+                "API 'Product Information v4' (i poczekaj kilka minut na aktywację)")
 
     def _headers(self) -> dict:
         return {"Authorization": f"Bearer {self.token()}", "X-DIGIKEY-Client-Id": self.keys["DIGIKEY_CLIENT_ID"],
@@ -186,6 +227,10 @@ class MouserClient(DistributorClient):
     (bez dokumentów zgodności) – służy jako dodatkowa informacja i do wykrywania domeny producenta."""
     name = "Mouser"
     env = ("MOUSER_API_KEY",)
+
+    def explain(self, exc: Exception) -> str:
+        return ("klucz Search API jest nieprawidłowy – użyj klucza z e-maila od Mouser dla 'Search API' "
+                "(nie 'Order API'), bez spacji i cudzysłowów")
     api_domains = ["api.mouser.com"]
     doc_domains = ["mouser.com"]
 
@@ -194,7 +239,10 @@ class MouserClient(DistributorClient):
         body = {"SearchByPartRequest": {"mouserPartNumber": mpn, "partSearchOptions": "Exact"}}
         data = self.session.api("POST", url, self.api_domains, json=body).json() or {}
         if data.get("Errors"):
-            raise FetchError(url.split("?")[0], f"Mouser API: {data['Errors']}")
+            msgs = "; ".join(str(e.get("Message") or e) if isinstance(e, dict) else str(e) for e in data["Errors"])
+            if re.search(r"invalid|key|unauthori|identifier", msgs, re.I):
+                raise LoginRequired(url.split("?")[0], f"Mouser odrzucił klucz API: {msgs}", 401)
+            raise FetchError(url.split("?")[0], f"Mouser API: {msgs}")
         out = []
         for p in ((data.get("SearchResults") or {}).get("Parts") or []):
             out.append(DistributorPart(self.name, p.get("ManufacturerPartNumber", ""), p.get("Manufacturer", ""),
@@ -298,8 +346,9 @@ class DistributorHub:
             try:
                 out += c.lookup(mpn)
             except LoginRequired as exc:
-                self.errors[c.name] = str(exc)
-                log.warning("%s: %s", c.name, exc)
+                hint = c.explain(exc)
+                self.errors[c.name] = f"{exc}" + (f" → {hint}" if hint else "")
+                log.warning("%s: %s", c.name, self.errors[c.name])
             except (FetchError, ValueError, KeyError) as exc:
                 log.info("%s: brak danych dla %s: %s", c.name, mpn, exc)
         self._cache[key] = out
